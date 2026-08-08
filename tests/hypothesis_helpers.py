@@ -3,10 +3,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import unicodedata
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 HYPOTHESIS_FIXTURES = REPOSITORY_ROOT / "tests" / "fixtures" / "hypotheses"
@@ -46,7 +48,7 @@ def normalized_copy(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        if not math.isfinite(value):
             raise ValueError("non-finite number")
         return value
     if isinstance(value, str):
@@ -180,7 +182,7 @@ def active_insight(
 
 
 def deterministic_clock() -> datetime:
-    return datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
+    return datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 
 
 def deterministic_event_id(next_sequence: int) -> str:

@@ -5,9 +5,10 @@ import hashlib
 import json
 import os
 import unicodedata
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
@@ -74,9 +75,7 @@ def test_pinned_arbor_v3_import_is_deterministic_immutable_and_replayable() -> N
         first.tree.compatibility["quarantined"] = False  # type: ignore[index]
 
     events = [json.loads(canonical_json(event)) for event in first.events]
-    assert [event["sequence"] for event in events] == list(
-        range(1, len(events) + 1)
-    )
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert events[0]["event_type"] == "run.started"
     assert all(event["timestamp"] == "1970-01-01T00:00:00Z" for event in events)
     assert first.tree.revision == len(events) - 1
@@ -89,9 +88,10 @@ def test_pinned_arbor_v3_import_is_deterministic_immutable_and_replayable() -> N
         validator.validate({"artifact_type": "ledger_event", "payload": event})
         content = copy.deepcopy(event)
         event_hash = content.pop("event_hash")
-        assert event_hash == hashlib.sha256(
-            canonical_json(content).encode("utf-8")
-        ).hexdigest()
+        assert (
+            event_hash
+            == hashlib.sha256(canonical_json(content).encode("utf-8")).hexdigest()
+        )
         replayed = apply_tree_event(replayed, event)
     assert replayed is not None
     assert replayed.to_dict() == first.tree.to_dict()
@@ -168,9 +168,7 @@ def test_legacy_status_projection_hashes_free_text_and_has_exact_shape() -> None
         assert projection["stop_reason"] == legacy.get("stop_reason")
         assert projection["attempt"] == legacy.get("attempt", 1)
         for field in ("result", "insight", "code_ref", "related_work", "grounding"):
-            expected = (
-                _text_sha256(legacy[field]) if legacy.get(field) else None
-            )
+            expected = _text_sha256(legacy[field]) if legacy.get(field) else None
             assert projection[f"{field}_sha256"] == expected
 
 
@@ -204,9 +202,10 @@ def test_missing_flags_and_compatibility_sentinels_are_explicit() -> None:
     for node in tree["nodes"]:
         assert node["scope"]["data_snapshot_sha256"] == LEGACY_UNKNOWN_HASH
         assert node["scope"]["cost_model_sha256"] == LEGACY_UNKNOWN_HASH
-        assert node["hypothesis"]["mechanism"] == arbor_v3_mapping()["nodes"][
-            node["id"]
-        ]["hypothesis"]
+        assert (
+            node["hypothesis"]["mechanism"]
+            == arbor_v3_mapping()["nodes"][node["id"]]["hypothesis"]
+        )
 
 
 def test_safe_meta_allowlist_and_dropped_values_do_not_leak() -> None:
@@ -231,9 +230,7 @@ def test_safe_meta_allowlist_and_dropped_values_do_not_leak() -> None:
         "metric_direction": "maximize",
         "max_depth": 3,
     }
-    assert set(compatibility["dropped_meta_keys"]) == known_dropped | {
-        unknown_label
-    }
+    assert set(compatibility["dropped_meta_keys"]) == known_dropped | {unknown_label}
     assert compatibility["dropped_meta_keys"] == sorted(
         compatibility["dropped_meta_keys"]
     )
@@ -261,9 +258,7 @@ def test_safe_meta_allowlist_and_dropped_values_do_not_leak() -> None:
     "mutate",
     [
         pytest.param(
-            lambda compatibility: compatibility["safe_meta"].update(
-                baseline_score=0.1
-            ),
+            lambda compatibility: compatibility["safe_meta"].update(baseline_score=0.1),
             id="safe-meta-not-allowlisted",
         ),
         pytest.param(
@@ -273,23 +268,21 @@ def test_safe_meta_allowlist_and_dropped_values_do_not_leak() -> None:
             id="dropped-secret-value",
         ),
         pytest.param(
-            lambda compatibility: compatibility["legacy_scores_by_node"][
-                "ROOT"
-            ].update(score_source="guessed"),
+            lambda compatibility: compatibility["legacy_scores_by_node"]["ROOT"].update(
+                score_source="guessed"
+            ),
             id="score-source",
         ),
         pytest.param(
-            lambda compatibility: compatibility["legacy_status_by_node"][
-                "ROOT"
-            ].update(result="raw result must not survive"),
+            lambda compatibility: compatibility["legacy_status_by_node"]["ROOT"].update(
+                result="raw result must not survive"
+            ),
             id="raw-status-extra-field",
         ),
         pytest.param(
             lambda compatibility: compatibility["missing_fields_by_node"][
                 "ROOT"
-            ].append(
-                compatibility["missing_fields_by_node"]["ROOT"][0]
-            ),
+            ].append(compatibility["missing_fields_by_node"]["ROOT"][0]),
             id="duplicate-missing-flag",
         ),
     ],
@@ -349,9 +342,10 @@ def test_individual_arbor_node_is_normalized_without_guessing_parentage() -> Non
     assert status["source_parent_id"] == "ROOT"
     assert status["source_depth"] == 1
     assert status["result_sha256"] == _text_sha256("Pre-v3 score field")
-    assert tree["compatibility"]["legacy_scores_by_node"]["2"][
-        "score_source"
-    ] == "score_delta"
+    assert (
+        tree["compatibility"]["legacy_scores_by_node"]["2"]["score_source"]
+        == "score_delta"
+    )
 
 
 def test_structurally_invalid_legacy_topology_is_compatibility_error() -> None:
@@ -429,9 +423,7 @@ def test_quarantined_import_cannot_propagate_through_store(tmp_path: Path) -> No
     directory = tmp_path / "state"
     directory.mkdir()
     result.tree.write(directory / "tree.json")
-    event_text = "".join(
-        f"{canonical_json(event)}\n" for event in result.events
-    )
+    event_text = "".join(f"{canonical_json(event)}\n" for event in result.events)
     (directory / "tree.events.jsonl").write_text(event_text, encoding="utf-8")
     store = HypothesisTreeStore.open(directory)
     assert store.recover().to_dict() == result.tree.to_dict()

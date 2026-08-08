@@ -126,10 +126,8 @@ def _multiprocess_add_worker(
             result_queue.put(("ok", worker_index, result.revision))
             return
         raise TimeoutError("mutation did not serialize within 20 retries")
-    except BaseException as error:  # pragma: no cover - reported in parent
-        result_queue.put(
-            ("error", worker_index, type(error).__name__, str(error))
-        )
+    except Exception as error:  # noqa: BLE001  # pragma: no cover - child reports all
+        result_queue.put(("error", worker_index, type(error).__name__, str(error)))
 
 
 def test_store_serial_mutations_emit_canonical_c6_events_and_replay(
@@ -187,9 +185,9 @@ def test_store_serial_mutations_emit_canonical_c6_events_and_replay(
         event["event_hash"] for event in events[:-1]
     ]
     validator = Draft202012Validator(load_schema(), format_checker=FormatChecker())
-    raw_lines = (directory / "tree.events.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    raw_lines = (
+        (directory / "tree.events.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     for raw_line, event in zip(raw_lines, events, strict=True):
         assert raw_line == canonical_json(event)
         assert event["event_hash"] == _event_hash(event)
@@ -206,9 +204,7 @@ def test_store_serial_mutations_emit_canonical_c6_events_and_replay(
 
     replayed = apply_tree_event(None, events[0])
     assert replayed.to_dict() == initial.to_dict()
-    for event, expected in zip(
-        events[1:], (added, running, pruned), strict=True
-    ):
+    for event, expected in zip(events[1:], (added, running, pruned), strict=True):
         replayed = apply_tree_event(replayed, event)
         assert replayed.to_dict() == expected.to_dict()
     assert isinstance(store.verify(), TreeVerification)
@@ -398,9 +394,7 @@ def test_missing_snapshot_is_rebuilt_from_authoritative_journal(
     recovered = HypothesisTreeStore.open(directory).recover()
 
     assert recovered.to_dict() == expected.to_dict()
-    assert (directory / "tree.json").read_text(
-        encoding="utf-8"
-    ) == expected.to_json()
+    assert (directory / "tree.json").read_text(encoding="utf-8") == expected.to_json()
 
 
 def test_event_behind_snapshot_is_rebuilt_from_journal(tmp_path: Path) -> None:
@@ -417,9 +411,7 @@ def test_event_behind_snapshot_is_rebuilt_from_journal(tmp_path: Path) -> None:
     recovered = HypothesisTreeStore.open(directory).recover()
 
     assert recovered.to_dict() == expected.to_dict()
-    assert (directory / "tree.json").read_text(
-        encoding="utf-8"
-    ) == expected.to_json()
+    assert (directory / "tree.json").read_text(encoding="utf-8") == expected.to_json()
 
 
 def test_snapshot_tamper_with_wrong_hash_is_rejected(tmp_path: Path) -> None:
@@ -481,9 +473,7 @@ def test_journal_hash_sequence_and_partial_event_tamper_fail_closed(
         events[1]["event_hash"] = _event_hash(events[1])
         _rewrite_events(directory, events)
     else:
-        with (directory / "tree.events.jsonl").open(
-            "a", encoding="utf-8"
-        ) as stream:
+        with (directory / "tree.events.jsonl").open("a", encoding="utf-8") as stream:
             stream.write('{"schema_version":')
 
     with pytest.raises(TreeIntegrityError):

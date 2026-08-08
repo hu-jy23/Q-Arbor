@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -145,16 +146,12 @@ def test_failed_child_insight_propagates_upward_without_scope_generalization(
     )
     _add_node(store, "child", "root", 2)
     _add_node(store, "grandchild", "child", 3, scope=source_scope)
-    source_tree = _attach_failure_insight(
-        store, "grandchild", scope=source_scope
-    )
+    source_tree = _attach_failure_insight(store, "grandchild", scope=source_scope)
     source_before = node_record(source_tree, "grandchild")
 
     propagated = _apply(
         store,
-        TreeMutation.propagate_insight(
-            "grandchild", "root", "insight.grandchild"
-        ),
+        TreeMutation.propagate_insight("grandchild", "root", "insight.grandchild"),
         "propagate.grandchild.root",
     )
     root = node_record(propagated, "root")
@@ -173,9 +170,7 @@ def test_duplicate_identical_propagation_is_semantically_idempotent(
     store = _new_store(tmp_path)
     _add_node(store, "child", "root", 2)
     _attach_failure_insight(store, "child")
-    mutation = TreeMutation.propagate_insight(
-        "child", "root", "insight.child"
-    )
+    mutation = TreeMutation.propagate_insight("child", "root", "insight.child")
     first = _apply(store, mutation, "propagate.first")
     second = _apply(store, mutation, "propagate.second")
 
@@ -233,9 +228,7 @@ def test_propagation_rejects_every_required_scope_mismatch(
     with pytest.raises(TreeConflictError):
         _apply(
             store,
-            TreeMutation.propagate_insight(
-                "child", "root", "insight.child"
-            ),
+            TreeMutation.propagate_insight("child", "root", "insight.child"),
             f"propagate.scope.{field}",
         )
 
@@ -252,9 +245,7 @@ def test_propagation_rejects_sibling_transfer(tmp_path: Path) -> None:
     with pytest.raises(TreeConflictError):
         _apply(
             store,
-            TreeMutation.propagate_insight(
-                "left", "right", "insight.left"
-            ),
+            TreeMutation.propagate_insight("left", "right", "insight.left"),
             "propagate.sibling",
         )
 
@@ -281,12 +272,8 @@ def test_propagation_rejects_sibling_transfer(tmp_path: Path) -> None:
             },
             id="contaminated-evidence",
         ),
-        pytest.param(
-            lambda: {"validity": "uncertain"}, id="uncertain-insight"
-        ),
-        pytest.param(
-            lambda: {"grade": "contradicted"}, id="contradicted-insight"
-        ),
+        pytest.param(lambda: {"validity": "uncertain"}, id="uncertain-insight"),
+        pytest.param(lambda: {"grade": "contradicted"}, id="contradicted-insight"),
     ],
 )
 def test_propagation_rejects_nonactive_or_tainted_insight(
@@ -301,9 +288,7 @@ def test_propagation_rejects_nonactive_or_tainted_insight(
     with pytest.raises(TreeConflictError):
         _apply(
             store,
-            TreeMutation.propagate_insight(
-                "child", "root", "insight.child"
-            ),
+            TreeMutation.propagate_insight("child", "root", "insight.child"),
             "propagate.rejected",
         )
 

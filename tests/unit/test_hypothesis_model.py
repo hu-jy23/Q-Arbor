@@ -411,9 +411,7 @@ def test_tree_output_and_nested_state_are_detached_and_immutable() -> None:
             lambda tree: _child(tree).update(parent_id="node.missing"),
             id="missing-parent",
         ),
-        pytest.param(
-            lambda tree: _child(tree).update(depth=2), id="wrong-depth"
-        ),
+        pytest.param(lambda tree: _child(tree).update(depth=2), id="wrong-depth"),
         pytest.param(
             lambda tree: tree["nodes"][0].update(children_ids=[]),
             id="nonreciprocal-child",
@@ -460,9 +458,7 @@ def test_tree_rejects_unreachable_cycle() -> None:
         lineage_refs=["node.child"],
     )
     grandchild["family"] = copy.deepcopy(child["family"])
-    grandchild["family"].update(
-        family_id="family.grandchild", proposal_order=3
-    )
+    grandchild["family"].update(family_id="family.grandchild", proposal_order=3)
     grandchild["failure"] = {
         "failure_type": "none",
         "summary": "",
@@ -507,9 +503,10 @@ def test_node_draft_and_mutation_are_immutable_and_canonically_hashed() -> None:
     }
 
     assert mutation.to_dict() == expected
-    assert mutation.sha256 == hashlib.sha256(
-        canonical_json(expected).encode("utf-8")
-    ).hexdigest()
+    assert (
+        mutation.sha256
+        == hashlib.sha256(canonical_json(expected).encode("utf-8")).hexdigest()
+    )
     detached = mutation.to_dict()
     detached["payload"]["draft"]["hypothesis"]["mechanism"] = "mutated"
     assert mutation.to_dict() == expected

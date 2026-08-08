@@ -3,8 +3,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 import pytest
 
@@ -159,22 +160,18 @@ def test_status_free_text_is_hashed_and_unsafe_meta_values_never_cross() -> None
     assert statuses["1"]["attempt"] == 2
     assert (
         statuses["1"]["insight_sha256"]
-        == hashlib.sha256(
-            "Tail clipping helped & needs confirmation".encode()
-        ).hexdigest()
+        == hashlib.sha256(b"Tail clipping helped & needs confirmation").hexdigest()
     )
     assert (
         statuses["1"]["code_ref_sha256"]
-        == hashlib.sha256("refs/heads/idea-1".encode()).hexdigest()
+        == hashlib.sha256(b"refs/heads/idea-1").hexdigest()
     )
 
     assert compatibility["safe_meta"] == {
         "max_depth": 3,
         "metric_direction": "maximize",
     }
-    unknown_label = (
-        "unknown-sha256:" + hashlib.sha256("plugin_payload".encode()).hexdigest()
-    )
+    unknown_label = "unknown-sha256:" + hashlib.sha256(b"plugin_payload").hexdigest()
     dropped = compatibility["dropped_meta_keys"]
     assert dropped == sorted(dropped)
     assert "eval_cmd" in dropped
