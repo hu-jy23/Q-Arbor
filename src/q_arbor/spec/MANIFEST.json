@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "status": "frozen-c6-input",
+  "source": "../WorkSpace/q-arbor-goal-1/evidence/C6_INTERFACE_SCHEMA.json",
+  "artifacts": [
+    {
+      "path": "C6_INTERFACE_SCHEMA.json",
+      "sha256": "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+    }
+  ],
+  "claim_boundary": "Design schema only; implementation qualification remains C7-C13."
+}
+

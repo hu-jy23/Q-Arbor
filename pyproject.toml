@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "q-arbor"
+version = "0.1.0.dev0"
+description = "A partial prototype of an auditable quantitative research harness built on Arbor"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Q-Arbor research project"}]
+dependencies = [
+  "jsonschema[format]>=4.23,<5",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<9",
+  "build>=1.2,<2",
+]
+
+[project.scripts]
+q-arbor-contract = "q_arbor.contracts.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+q_arbor = ["py.typed", "spec/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

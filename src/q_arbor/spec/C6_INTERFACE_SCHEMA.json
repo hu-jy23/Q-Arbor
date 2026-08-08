@@ -1,0 +1,1078 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:q-arbor:c6:identity-interface:1.0",
+  "title": "Q-Arbor C6 Frozen Interface Envelope",
+  "description": "Design-time interface contract. It freezes Goal A identity seams and is not an implementation or a statistical guarantee.",
+  "type": "object",
+  "required": ["artifact_type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact_type": {
+      "enum": [
+        "quant_research_contract",
+        "quant_hypothesis_node",
+        "q_hypothesis_tree",
+        "attempt_record",
+        "prompt_snapshot",
+        "test_family_snapshot",
+        "evaluation_request",
+        "evaluation_result",
+        "capability_grant",
+        "ledger_event",
+        "checkpoint",
+        "research_package"
+      ]
+    },
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"artifact_type": {"const": "quant_research_contract"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/QuantResearchContract"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "quant_hypothesis_node"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/QuantHypothesisNode"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "q_hypothesis_tree"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/QHypothesisTree"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "attempt_record"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/AttemptRecord"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "prompt_snapshot"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/PromptSnapshot"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "test_family_snapshot"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/TestFamilySnapshot"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "evaluation_request"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/EvaluationRequest"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "evaluation_result"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/EvaluationResult"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "capability_grant"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/CapabilityGrant"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "ledger_event"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/LedgerEvent"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "checkpoint"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/QCheckpoint"}}}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "research_package"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/ResearchPackage"}}}
+    }
+  ],
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "RelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {"not": {"pattern": "^/"}},
+        {"not": {"pattern": "(^|/)\\.\\.(/|$)"}},
+        {"not": {"pattern": "(^|/)\\.(/|$)"}},
+        {"not": {"pattern": "//"}},
+        {"not": {"pattern": "\\\\|^[A-Za-z]:"}}
+      ]
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "required": ["artifact_id", "kind", "relative_path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/Identifier"},
+        "kind": {"type": "string", "minLength": 1},
+        "relative_path": {"$ref": "#/$defs/RelativePath"},
+        "sha256": {"$ref": "#/$defs/Sha256"},
+        "media_type": {"type": ["string", "null"]},
+        "produced_by_event_id": {"type": ["string", "null"]}
+      }
+    },
+    "MetricSpec": {
+      "type": "object",
+      "required": ["name", "direction", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "direction": {"enum": ["maximize", "minimize"]},
+        "unit": {"type": "string"},
+        "aggregation": {"type": ["string", "null"]}
+      }
+    },
+    "ConstraintSpec": {
+      "type": "object",
+      "required": ["name", "operator", "threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "operator": {"enum": ["lt", "le", "gt", "ge", "eq", "in"]},
+        "threshold": {},
+        "unit": {"type": ["string", "null"]}
+      }
+    },
+    "PITSpec": {
+      "type": "object",
+      "required": ["enabled", "asof_rule", "availability_lag", "universe_rule", "adjustment_rule"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "asof_rule": {"type": "string", "minLength": 1},
+        "availability_lag": {"type": "string", "minLength": 1},
+        "universe_rule": {"type": "string", "minLength": 1},
+        "adjustment_rule": {"type": "string", "minLength": 1},
+        "label_horizon": {"type": "string"},
+        "known_limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "SplitSpec": {
+      "type": "object",
+      "required": ["dataset_id", "manifest_sha256", "role", "query_budget", "sealed"],
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {"$ref": "#/$defs/Identifier"},
+        "manifest_sha256": {"$ref": "#/$defs/Sha256"},
+        "role": {"enum": ["development", "gate", "final"]},
+        "query_budget": {"type": "integer", "minimum": 0},
+        "sealed": {"type": "boolean"},
+        "time_range": {
+          "type": "object",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": {"type": "string"},
+            "end": {"type": "string"}
+          }
+        }
+      },
+      "x-invariants": [
+        "manifest_sha256 identifies the immutable canonical manifest for exactly this split without exposing hidden paths, rows, labels or seeds."
+      ]
+    },
+    "CostModel": {
+      "type": "object",
+      "required": ["model_id", "sha256", "components", "currency"],
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {"$ref": "#/$defs/Identifier"},
+        "sha256": {"$ref": "#/$defs/Sha256"},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "rule"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "rule": {"type": "string"}
+            }
+          }
+        },
+        "currency": {"type": "string", "minLength": 1},
+        "execution_delay": {"type": "string"}
+      }
+    },
+    "BudgetSpec": {
+      "type": "object",
+      "required": ["max_nodes", "max_executor_runs", "max_dev_queries", "max_gate_queries", "max_final_queries"],
+      "additionalProperties": false,
+      "properties": {
+        "max_nodes": {"type": "integer", "minimum": 1},
+        "max_executor_runs": {"type": "integer", "minimum": 1},
+        "max_dev_queries": {"type": "integer", "minimum": 1},
+        "max_gate_queries": {"type": "integer", "minimum": 0},
+        "max_final_queries": {"const": 1},
+        "max_tokens": {"type": ["integer", "null"], "minimum": 1},
+        "max_wall_seconds": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "PluginIdentity": {
+      "type": "object",
+      "required": ["name", "version", "code_sha256", "artifact_type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/Identifier"},
+        "version": {"type": "string", "minLength": 1},
+        "code_sha256": {"$ref": "#/$defs/Sha256"},
+        "artifact_type": {"type": "string", "minLength": 1}
+      }
+    },
+    "QuantResearchContract": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "contract_id",
+        "task_id",
+        "task_kind",
+        "objective",
+        "plugin",
+        "editable_surface",
+        "protected_paths",
+        "required_outputs",
+        "data",
+        "metrics",
+        "cost_model",
+        "budgets",
+        "capabilities",
+        "model_provenance",
+        "statistical_plan",
+        "seeds",
+        "contract_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "contract_id": {"$ref": "#/$defs/Identifier"},
+        "task_id": {"$ref": "#/$defs/Identifier"},
+        "task_kind": {"enum": ["synthetic_factor", "formula_alpha", "futures_strategy", "custom_quant"]},
+        "objective": {
+          "type": "object",
+          "required": ["research_question", "baseline_ref", "candidate_artifact_type"],
+          "additionalProperties": false,
+          "properties": {
+            "research_question": {"type": "string", "minLength": 1},
+            "baseline_ref": {"type": "string", "minLength": 1},
+            "candidate_artifact_type": {"type": "string", "minLength": 1}
+          }
+        },
+        "plugin": {"$ref": "#/$defs/PluginIdentity"},
+        "editable_surface": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "protected_paths": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "required_outputs": {"type": "array", "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "data": {
+          "type": "object",
+          "required": ["snapshot_id", "snapshot_sha256", "schema_sha256", "point_in_time", "splits"],
+          "additionalProperties": false,
+          "properties": {
+            "snapshot_id": {"$ref": "#/$defs/Identifier"},
+            "snapshot_sha256": {"$ref": "#/$defs/Sha256"},
+            "schema_sha256": {"$ref": "#/$defs/Sha256"},
+            "source_version": {"type": ["string", "null"]},
+            "point_in_time": {"$ref": "#/$defs/PITSpec"},
+            "splits": {
+              "type": "object",
+              "required": ["development", "gate", "final"],
+              "additionalProperties": false,
+              "properties": {
+                "development": {"$ref": "#/$defs/SplitSpec"},
+                "gate": {"$ref": "#/$defs/SplitSpec"},
+                "final": {"$ref": "#/$defs/SplitSpec"}
+              }
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "required": ["primary", "hard_constraints", "diagnostics", "admission_rule"],
+          "additionalProperties": false,
+          "properties": {
+            "primary": {"$ref": "#/$defs/MetricSpec"},
+            "hard_constraints": {"type": "array", "items": {"$ref": "#/$defs/ConstraintSpec"}},
+            "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/MetricSpec"}},
+            "admission_rule": {"type": "string", "minLength": 1}
+          }
+        },
+        "cost_model": {"$ref": "#/$defs/CostModel"},
+        "budgets": {"$ref": "#/$defs/BudgetSpec"},
+        "capabilities": {
+          "type": "object",
+          "required": ["executor_roles", "coordinator_roles", "finalizer_roles", "network_policy"],
+          "additionalProperties": false,
+          "properties": {
+            "executor_roles": {"type": "array", "items": {"const": "development"}, "minItems": 1, "maxItems": 1},
+            "coordinator_roles": {"type": "array", "items": {"enum": ["development", "gate"]}, "minItems": 2, "maxItems": 2, "uniqueItems": true},
+            "finalizer_roles": {"type": "array", "items": {"const": "final"}, "minItems": 1, "maxItems": 1},
+            "network_policy": {"enum": ["deny", "allowlist"]}
+          }
+        },
+        "model_provenance": {
+          "type": "object",
+          "required": ["provider", "model", "version", "knowledge_cutoff_status", "contamination_risk"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": {"type": "string", "minLength": 1},
+            "model": {"type": "string", "minLength": 1},
+            "version": {"type": ["string", "null"]},
+            "knowledge_cutoff_status": {"enum": ["known", "unknown", "not_applicable"]},
+            "knowledge_cutoff": {"type": ["string", "null"]},
+            "contamination_risk": {"enum": ["low", "unknown", "elevated", "not_applicable"]}
+          }
+        },
+        "statistical_plan": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/StatisticalMethodPlan"}
+        },
+        "seeds": {"type": "array", "minItems": 1, "items": {"type": "integer"}, "uniqueItems": true},
+        "contract_hash": {"$ref": "#/$defs/Sha256"}
+      },
+      "x-invariants": [
+        "Hash canonical UTF-8 JSON with sorted keys and compact separators after removing contract_hash.",
+        "development.role=development and development.sealed=false",
+        "gate.role=gate and gate.sealed=true",
+        "final.role=final, final.sealed=true, final.query_budget=1",
+        "No secret, credential, or hidden split filesystem path is serialized into the contract.",
+        "Editable and protected path sets must be disjoint after glob normalization."
+      ]
+    },
+    "Scope": {
+      "type": "object",
+      "required": ["market", "universe", "frequency", "horizon", "data_snapshot_sha256", "cost_model_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "market": {"type": "string", "minLength": 1},
+        "universe": {"type": "string", "minLength": 1},
+        "frequency": {"type": "string", "minLength": 1},
+        "horizon": {"type": "string", "minLength": 1},
+        "time_range": {"type": ["string", "null"]},
+        "fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "regime_labels": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "data_snapshot_sha256": {"$ref": "#/$defs/Sha256"},
+        "cost_model_sha256": {"$ref": "#/$defs/Sha256"}
+      }
+    },
+    "HypothesisSpec": {
+      "type": "object",
+      "required": ["mechanism", "falsifiable_prediction", "observable", "single_change", "conflicts"],
+      "additionalProperties": false,
+      "properties": {
+        "mechanism": {"type": "string", "minLength": 1},
+        "falsifiable_prediction": {"type": "string", "minLength": 1},
+        "observable": {"type": "string", "minLength": 1},
+        "single_change": {"type": "string", "minLength": 1},
+        "conflicts": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "FamilyIdentity": {
+      "type": "object",
+      "required": ["family_id", "proposal_order", "canonical_status", "similarity_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "family_id": {"$ref": "#/$defs/Identifier"},
+        "parent_family_id": {"type": ["string", "null"]},
+        "proposal_order": {"type": "integer", "minimum": 1},
+        "canonical_status": {"enum": ["pending", "unique", "exact_duplicate", "near_duplicate", "unavailable"]},
+        "canonical_hash": {"oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}]},
+        "similarity_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["candidate_id", "method", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "candidate_id": {"$ref": "#/$defs/Identifier"},
+              "method": {"type": "string"},
+              "value": {"type": "number"}
+            }
+          }
+        }
+      }
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "required": ["evidence_id", "level", "claim", "status", "artifact_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/Identifier"},
+        "attempt_id": {"type": ["string", "null"]},
+        "result_id": {"type": ["string", "null"]},
+        "split_role": {"enum": ["none", "development", "gate", "final"]},
+        "level": {"enum": ["observed", "inferred", "proposed"]},
+        "claim": {"type": "string", "minLength": 1},
+        "conditions": {"type": "array", "items": {"type": "string"}},
+        "status": {"enum": ["valid", "invalidated", "contaminated", "incomparable"]},
+        "artifact_refs": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}}
+      }
+    },
+    "InsightRecord": {
+      "type": "object",
+      "required": ["insight_id", "text", "scope", "evidence_ids", "grade", "validity"],
+      "additionalProperties": false,
+      "properties": {
+        "insight_id": {"$ref": "#/$defs/Identifier"},
+        "text": {"type": "string", "minLength": 1},
+        "scope": {"$ref": "#/$defs/Scope"},
+        "evidence_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "grade": {"enum": ["unverified", "development_supported", "gate_supported", "contradicted"]},
+        "validity": {"enum": ["active", "uncertain", "invalidated"]},
+        "invalidation_reason": {"type": ["string", "null"]}
+      }
+    },
+    "FailureRecord": {
+      "type": "object",
+      "required": ["failure_type", "summary", "evidence_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "failure_type": {
+          "enum": [
+            "none",
+            "invalid_candidate",
+            "implementation_failure",
+            "evaluation_failure",
+            "access_denied",
+            "constraint_violation",
+            "timeout",
+            "interruption",
+            "contamination",
+            "incomparable"
+          ]
+        },
+        "summary": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true}
+      }
+    },
+    "QuantHypothesisNode": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "id",
+        "parent_id",
+        "children_ids",
+        "depth",
+        "status",
+        "score",
+        "lifecycle",
+        "admissibility",
+        "hypothesis",
+        "scope",
+        "family",
+        "candidate_id",
+        "candidate_artifact",
+        "attempt_ids",
+        "evidence_refs",
+        "test_family_refs",
+        "lineage_refs",
+        "insights",
+        "failure",
+        "prompt_snapshot_sha256",
+        "created_event_id",
+        "last_event_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "id": {"$ref": "#/$defs/Identifier"},
+        "parent_id": {"type": ["string", "null"]},
+        "children_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "depth": {"type": "integer", "minimum": 0},
+        "status": {
+          "enum": ["pending", "running", "done", "needs_retry", "merged", "pruned", "invalid", "contaminated", "incomparable"]
+        },
+        "score": {"type": ["number", "null"]},
+        "lifecycle": {"enum": ["pending", "running", "needs_retry", "done", "merged", "pruned"]},
+        "admissibility": {"enum": ["unevaluated", "admissible", "invalid", "contaminated", "incomparable"]},
+        "hypothesis": {"$ref": "#/$defs/HypothesisSpec"},
+        "scope": {"$ref": "#/$defs/Scope"},
+        "family": {"$ref": "#/$defs/FamilyIdentity"},
+        "candidate_id": {"type": ["string", "null"]},
+        "candidate_artifact": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+        "attempt_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/EvidenceRef"}},
+        "test_family_refs": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "lineage_refs": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "insights": {"type": "array", "items": {"$ref": "#/$defs/InsightRecord"}},
+        "failure": {"$ref": "#/$defs/FailureRecord"},
+        "code_ref": {"type": ["string", "null"]},
+        "prompt_snapshot_sha256": {"oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}]},
+        "created_event_id": {"$ref": "#/$defs/Identifier"},
+        "last_event_id": {"$ref": "#/$defs/Identifier"}
+      },
+      "x-invariants": [
+        "id, parent_id, depth, created_event_id and dispatched hypothesis fields are immutable.",
+        "attempt_id identifies an execution attempt; it is never reused after interruption.",
+        "score is a read-only materialized projection of admissible referenced EvaluationResult objects; no actor may assign it directly.",
+        "Contaminated evidence cannot propagate as an active insight."
+      ]
+    },
+    "QHypothesisTree": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "revision", "contract_hash", "root_node_id", "run_state", "ledger_head", "nodes", "counts", "tree_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "revision": {"type": "integer", "minimum": 0},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "root_node_id": {"$ref": "#/$defs/Identifier"},
+        "run_state": {"enum": ["setup", "development", "frozen", "stopped", "finalized"]},
+        "ledger_head": {
+          "type": "object",
+          "required": ["last_sequence", "last_event_hash"],
+          "additionalProperties": false,
+          "properties": {
+            "last_sequence": {"type": "integer", "minimum": 1},
+            "last_event_hash": {"$ref": "#/$defs/Sha256"}
+          }
+        },
+        "nodes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/QuantHypothesisNode"}},
+        "counts": {
+          "type": "object",
+          "required": ["proposals", "unique_candidates", "candidate_families", "attempts", "evaluation_queries", "admissible_evidence"],
+          "additionalProperties": false,
+          "properties": {
+            "proposals": {"type": "integer", "minimum": 0},
+            "unique_candidates": {"type": "integer", "minimum": 0},
+            "candidate_families": {"type": "integer", "minimum": 0},
+            "attempts": {"type": "integer", "minimum": 0},
+            "evaluation_queries": {"type": "integer", "minimum": 0},
+            "admissible_evidence": {"type": "integer", "minimum": 0}
+          }
+        },
+        "compatibility": {"type": "object"},
+        "tree_hash": {"$ref": "#/$defs/Sha256"}
+      },
+      "x-invariants": [
+        "The tree is a materialized view at ledger_head; it is never the append-only history source.",
+        "children, counts, scores and current statuses are deterministic projections of verified records.",
+        "Mutation requires expected revision and an idempotency key; the event is durable before the tree snapshot changes."
+      ]
+    },
+    "AttemptRecord": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "node_id", "candidate_id", "attempt_id", "attempt_kind", "ordinal", "retry_of_attempt_id", "base_commit", "branch", "worktree", "contract_hash", "prompt_snapshot", "capability_grant_id", "requested_split", "manifest", "state", "evaluation_request_ids", "evidence_ids", "failure_ids", "created_event_id", "last_event_id"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "node_id": {"$ref": "#/$defs/Identifier"},
+        "candidate_id": {"$ref": "#/$defs/Identifier"},
+        "attempt_id": {"$ref": "#/$defs/Identifier"},
+        "attempt_kind": {"enum": ["implement_development", "gate_evaluation", "final_evaluation"]},
+        "ordinal": {"type": "integer", "minimum": 1},
+        "retry_of_attempt_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "base_commit": {"type": "string", "minLength": 7},
+        "branch": {"type": ["string", "null"]},
+        "worktree": {"oneOf": [{"$ref": "#/$defs/RelativePath"}, {"type": "null"}]},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "prompt_snapshot": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+        "capability_grant_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "requested_split": {"enum": ["development", "gate", "final"]},
+        "manifest": {"$ref": "#/$defs/ArtifactRef"},
+        "state": {"enum": ["dispatched", "running", "evaluating", "completed", "failed", "denied", "interrupted"]},
+        "evaluation_request_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "evidence_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "failure_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "created_event_id": {"$ref": "#/$defs/Identifier"},
+        "last_event_id": {"$ref": "#/$defs/Identifier"}
+      },
+      "x-invariants": [
+        "An attempt_id is never reused; retry creates a new attempt and retains the terminal predecessor.",
+        "Dispatch and prompt snapshot records are durable before the external executor starts.",
+        "Replaying a durable response may reuse one logical evaluation request without new data access; restarting an evaluator requires a new request and query budget, and final cannot restart after consumption."
+      ]
+    },
+    "PromptSnapshot": {
+      "type": "object",
+      "required": ["schema_version", "prompt_snapshot_id", "run_id", "phase", "cycle", "attempt_id", "tree_revision", "ledger_sequence", "contract_hash", "candidate_id", "family_id", "scope", "base_commit", "branch", "worktree", "system_template_id", "system_prompt_sha256", "user_prompt_sha256", "system_prompt_redacted", "user_prompt_redacted", "plugin", "selected_insight_ids", "evidence_hashes", "editable_surface", "protected_paths", "required_outputs", "development_evaluator_descriptor", "capability_grant_id", "redaction_manifest", "snapshot_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "prompt_snapshot_id": {"$ref": "#/$defs/Identifier"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "phase": {"enum": ["observe", "ideate", "select", "dispatch", "evaluate", "decide", "propagate", "stop"]},
+        "cycle": {"type": "integer", "minimum": 0},
+        "attempt_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "tree_revision": {"type": "integer", "minimum": 0},
+        "ledger_sequence": {"type": "integer", "minimum": 1},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "candidate_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "family_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "scope": {"oneOf": [{"$ref": "#/$defs/Scope"}, {"type": "null"}]},
+        "base_commit": {"type": ["string", "null"]},
+        "branch": {"type": ["string", "null"]},
+        "worktree": {"oneOf": [{"$ref": "#/$defs/RelativePath"}, {"type": "null"}]},
+        "system_template_id": {"$ref": "#/$defs/Identifier"},
+        "system_prompt_sha256": {"$ref": "#/$defs/Sha256"},
+        "user_prompt_sha256": {"$ref": "#/$defs/Sha256"},
+        "system_prompt_redacted": {"type": "string"},
+        "user_prompt_redacted": {"type": "string"},
+        "plugin": {"$ref": "#/$defs/PluginIdentity"},
+        "selected_insight_ids": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "evidence_hashes": {"type": "array", "items": {"$ref": "#/$defs/Sha256"}, "uniqueItems": true},
+        "editable_surface": {"type": "array", "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "protected_paths": {"type": "array", "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "required_outputs": {"type": "array", "items": {"$ref": "#/$defs/RelativePath"}, "uniqueItems": true},
+        "development_evaluator_descriptor": {"type": "object"},
+        "capability_grant_id": {"oneOf": [{"$ref": "#/$defs/Identifier"}, {"type": "null"}]},
+        "redaction_manifest": {"type": "array", "items": {"type": "string"}},
+        "snapshot_hash": {"$ref": "#/$defs/Sha256"}
+      },
+      "x-invariants": [
+        "The redacted prompt fields are the exact bytes sent to the model after deterministic normalization.",
+        "Capability tokens, secrets, raw gate or final locators, seeds and data never appear in the snapshot.",
+        "Executor dispatch snapshots contain development evaluation material only."
+      ]
+    },
+    "TestFamilySnapshot": {
+      "type": "object",
+      "required": ["schema_version", "test_family_id", "run_id", "decision_point_id", "family_unit", "duplicate_policy", "member_candidate_ids", "evaluation_request_ids", "benchmark_ref", "selection_rule_ref", "dependence_description_ref", "method_plan_hash", "frozen_event_id", "snapshot_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "test_family_id": {"$ref": "#/$defs/Identifier"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "decision_point_id": {"$ref": "#/$defs/Identifier"},
+        "family_unit": {"enum": ["evaluation_query", "candidate", "canonical_family"]},
+        "duplicate_policy": {"enum": ["count_each_query", "collapse_exact_only", "predeclared"]},
+        "member_candidate_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "evaluation_request_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Identifier"}, "uniqueItems": true},
+        "benchmark_ref": {"$ref": "#/$defs/ArtifactRef"},
+        "selection_rule_ref": {"$ref": "#/$defs/ArtifactRef"},
+        "dependence_description_ref": {"$ref": "#/$defs/ArtifactRef"},
+        "method_plan_hash": {"$ref": "#/$defs/Sha256"},
+        "frozen_event_id": {"$ref": "#/$defs/Identifier"},
+        "snapshot_hash": {"$ref": "#/$defs/Sha256"}
+      },
+      "x-invariants": [
+        "Denied, failed, duplicate and scoreless requests remain represented according to the frozen selection and duplicate policies.",
+        "Candidate family labels and semantic similarity do not establish statistical independence or effective trial count.",
+        "Changing membership or method assumptions creates a new snapshot and invalidates dependent diagnostics."
+      ]
+    },
+    "EvaluationRequest": {
+      "type": "object",
+      "required": ["request_id", "run_id", "node_id", "attempt_id", "idempotency_key", "contract_hash", "candidate", "candidate_hash", "validation_receipt", "plugin", "split_role", "split_manifest_hash", "capability_grant_id", "created_event_id"],
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/Identifier"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "node_id": {"$ref": "#/$defs/Identifier"},
+        "attempt_id": {"$ref": "#/$defs/Identifier"},
+        "idempotency_key": {"$ref": "#/$defs/Identifier"},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "candidate": {"$ref": "#/$defs/ArtifactRef"},
+        "candidate_hash": {"$ref": "#/$defs/Sha256"},
+        "validation_receipt": {"$ref": "#/$defs/ArtifactRef"},
+        "plugin": {"$ref": "#/$defs/PluginIdentity"},
+        "split_role": {"enum": ["development", "gate", "final"]},
+        "split_manifest_hash": {"$ref": "#/$defs/Sha256"},
+        "capability_grant_id": {"$ref": "#/$defs/Identifier"},
+        "requested_metrics": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "created_event_id": {"$ref": "#/$defs/Identifier"}
+      },
+      "x-invariants": [
+        "split_manifest_hash equals the selected QuantResearchContract SplitSpec.manifest_sha256 before authorization."
+      ]
+    },
+    "CheckResult": {
+      "type": "object",
+      "required": ["name", "status", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "status": {"enum": ["pass", "fail", "not_applicable", "not_observed"]},
+        "evidence": {"type": "string"}
+      }
+    },
+    "MetricValue": {
+      "type": "object",
+      "required": ["name", "value", "direction", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "value": {"type": ["number", "null"]},
+        "direction": {"enum": ["maximize", "minimize", "diagnostic"]},
+        "unit": {"type": "string"}
+      }
+    },
+    "StatisticalAssumption": {
+      "type": "object",
+      "required": ["name", "status", "evidence_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "status": {"enum": ["pass", "fail", "not_assessed"]},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/Identifier"}}
+      }
+    },
+    "StatisticalMethodPlan": {
+      "type": "object",
+      "required": [
+        "method",
+        "control_object",
+        "claim_ceiling",
+        "family_unit",
+        "duplicate_policy",
+        "confirmation_design",
+        "assumption_schema_id",
+        "required_assumptions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "method": {"enum": ["white_reality_check", "hansen_spa", "holm", "romano_wolf", "bh", "by", "dsr", "psr", "pbo", "custom"]},
+        "control_object": {"enum": ["global_null", "fwer", "fdr", "selection_bias", "overfit_probability", "none"]},
+        "claim_ceiling": {"enum": ["risk_flag", "diagnostic", "controlled"]},
+        "family_unit": {"enum": ["evaluation_query", "candidate", "canonical_family"]},
+        "duplicate_policy": {"enum": ["count_each_query", "collapse_exact_only", "predeclared"]},
+        "confirmation_design": {"enum": ["development_diagnostic", "fixed_family_resampling", "prespecified_holdout", "sequentially_valid"]},
+        "assumption_schema_id": {
+          "enum": [
+            "q-arbor.stats.white-reality-check.v1",
+            "q-arbor.stats.hansen-spa.v1",
+            "q-arbor.stats.holm.v1",
+            "q-arbor.stats.romano-wolf.v1",
+            "q-arbor.stats.bh.v1",
+            "q-arbor.stats.by.v1",
+            "q-arbor.stats.dsr.v1",
+            "q-arbor.stats.psr.v1",
+            "q-arbor.stats.pbo.v1",
+            "q-arbor.stats.custom.v1"
+          ]
+        },
+        "required_assumptions": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "allOf": [
+        {"if": {"properties": {"method": {"const": "white_reality_check"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.white-reality-check.v1"}}}},
+        {"if": {"properties": {"method": {"const": "hansen_spa"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.hansen-spa.v1"}}}},
+        {"if": {"properties": {"method": {"const": "holm"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.holm.v1"}}}},
+        {"if": {"properties": {"method": {"const": "romano_wolf"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.romano-wolf.v1"}}}},
+        {"if": {"properties": {"method": {"const": "bh"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.bh.v1"}}}},
+        {"if": {"properties": {"method": {"const": "by"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.by.v1"}}}},
+        {"if": {"properties": {"method": {"const": "dsr"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.dsr.v1"}}}},
+        {"if": {"properties": {"method": {"const": "psr"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.psr.v1"}}}},
+        {"if": {"properties": {"method": {"const": "pbo"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.pbo.v1"}}}},
+        {"if": {"properties": {"method": {"const": "custom"}}}, "then": {"properties": {"assumption_schema_id": {"const": "q-arbor.stats.custom.v1"}}}}
+      ]
+    },
+    "StatisticalDiagnostic": {
+      "type": "object",
+      "required": ["method", "method_plan_hash", "control_object", "status", "claim_level", "family_unit", "duplicate_policy", "family_snapshot_hash", "trial_count", "assumptions", "inputs_sha256", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {"enum": ["white_reality_check", "hansen_spa", "holm", "romano_wolf", "bh", "by", "dsr", "psr", "pbo", "custom"]},
+        "method_plan_hash": {"$ref": "#/$defs/Sha256"},
+        "control_object": {"enum": ["global_null", "fwer", "fdr", "selection_bias", "overfit_probability", "none"]},
+        "status": {"enum": ["not_run", "not_applicable", "diagnostic", "calibrated"]},
+        "claim_level": {"enum": ["risk_flag", "diagnostic", "controlled"]},
+        "family_unit": {"enum": ["evaluation_query", "candidate", "canonical_family"]},
+        "duplicate_policy": {"enum": ["count_each_query", "collapse_exact_only", "predeclared"]},
+        "family_snapshot_hash": {"$ref": "#/$defs/Sha256"},
+        "trial_count": {"type": "integer", "minimum": 1},
+        "assumptions": {"type": "array", "items": {"$ref": "#/$defs/StatisticalAssumption"}},
+        "inputs_sha256": {"$ref": "#/$defs/Sha256"},
+        "result": {"type": "object"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"method": {"const": "dsr"}}},
+          "then": {"properties": {"trial_count": {"minimum": 2}}}
+        },
+        {
+          "if": {"properties": {"trial_count": {"const": 1}}},
+          "then": {"properties": {"method": {"enum": ["psr", "custom"]}}}
+        }
+      ],
+      "x-invariants": [
+        "Each method has its own required assumptions; a generic valid-p-value flag is insufficient.",
+        "claim_level=controlled requires every required assumption to pass and an independently frozen confirmation design.",
+        "Goal A outputs use risk_flag or diagnostic; they do not assert a new control theorem."
+      ]
+    },
+    "EvaluationResult": {
+      "type": "object",
+      "required": ["result_id", "request_id", "status", "split_role", "primary_metric", "constraints", "diagnostics", "fold_metrics", "costs", "checks", "artifacts", "provenance", "failure", "statistical_diagnostics", "warnings"],
+      "additionalProperties": false,
+      "properties": {
+        "result_id": {"$ref": "#/$defs/Identifier"},
+        "request_id": {"$ref": "#/$defs/Identifier"},
+        "status": {"enum": ["success", "invalid_candidate", "implementation_failure", "access_denied", "evaluation_failure", "incomparable", "contaminated"]},
+        "split_role": {"enum": ["development", "gate", "final"]},
+        "primary_metric": {"$ref": "#/$defs/MetricValue"},
+        "constraints": {"type": "array", "items": {"$ref": "#/$defs/CheckResult"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/MetricValue"}},
+        "fold_metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["fold_id", "time_range", "metrics"],
+            "additionalProperties": false,
+            "properties": {
+              "fold_id": {"$ref": "#/$defs/Identifier"},
+              "time_range": {"type": "string"},
+              "metrics": {"type": "array", "items": {"$ref": "#/$defs/MetricValue"}}
+            }
+          }
+        },
+        "costs": {
+          "type": "object",
+          "required": ["gross", "transaction_cost", "net", "turnover", "cost_model_sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "gross": {"type": ["number", "null"]},
+            "transaction_cost": {"type": ["number", "null"]},
+            "net": {"type": ["number", "null"]},
+            "turnover": {"type": ["number", "null"]},
+            "cost_model_sha256": {"$ref": "#/$defs/Sha256"}
+          }
+        },
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/CheckResult"}},
+        "artifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+        "provenance": {
+          "type": "object",
+          "required": ["candidate_sha256", "code_commit", "data_snapshot_sha256", "split_manifest_hash", "contract_hash", "plugin_code_sha256", "evaluator_sha256", "config_sha256", "seed"],
+          "additionalProperties": false,
+          "properties": {
+            "candidate_sha256": {"$ref": "#/$defs/Sha256"},
+            "code_commit": {"type": "string", "minLength": 7},
+            "data_snapshot_sha256": {"$ref": "#/$defs/Sha256"},
+            "split_manifest_hash": {"$ref": "#/$defs/Sha256"},
+            "contract_hash": {"$ref": "#/$defs/Sha256"},
+            "plugin_code_sha256": {"$ref": "#/$defs/Sha256"},
+            "evaluator_sha256": {"$ref": "#/$defs/Sha256"},
+            "config_sha256": {"$ref": "#/$defs/Sha256"},
+            "seed": {"type": "integer"}
+          }
+        },
+        "failure": {"oneOf": [{"$ref": "#/$defs/FailureRecord"}, {"type": "null"}]},
+        "statistical_diagnostics": {"type": "array", "items": {"$ref": "#/$defs/StatisticalDiagnostic"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "x-invariants": [
+        "status=success requires all mandatory provenance hashes and hard checks to pass.",
+        "provenance.split_manifest_hash equals the EvaluationRequest split_manifest_hash and the selected contract SplitSpec.manifest_sha256.",
+        "A final result is terminal and cannot be fed back into propose, dispatch, or adaptive evaluate actions.",
+        "Raw gate/final data cannot appear in result artifacts or free-form output."
+      ]
+    },
+    "CapabilityGrant": {
+      "type": "object",
+      "required": ["grant_id", "run_id", "contract_hash", "role", "principal", "query_limit", "query_count", "state", "token_digest", "issued_event_id"],
+      "additionalProperties": false,
+      "properties": {
+        "grant_id": {"$ref": "#/$defs/Identifier"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "role": {"enum": ["development", "gate", "final"]},
+        "principal": {"enum": ["executor", "coordinator", "finalizer"]},
+        "query_limit": {"type": "integer", "minimum": 1},
+        "query_count": {"type": "integer", "minimum": 0},
+        "state": {"enum": ["active", "consumed", "revoked", "expired"]},
+        "token_digest": {"$ref": "#/$defs/Sha256"},
+        "issued_event_id": {"$ref": "#/$defs/Identifier"}
+      },
+      "x-invariants": [
+        "Raw capability tokens are never serialized, logged, or injected into LLM prompts.",
+        "executor principal is development-only; finalizer is final-only.",
+        "A final grant has query_limit=1 and becomes consumed after one terminal request."
+      ]
+    },
+    "LedgerEvent": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "sequence", "event_id", "timestamp", "event_type", "actor", "contract_hash", "payload", "prev_event_hash", "event_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "event_id": {"$ref": "#/$defs/Identifier"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "event_type": {
+          "enum": [
+            "run.started",
+            "contract.frozen",
+            "hypothesis.proposed",
+            "candidate.validated",
+            "candidate.rejected",
+            "candidate.duplicate",
+            "attempt.dispatched",
+            "attempt.started",
+            "phase.completed",
+            "validation.completed",
+            "evaluation.requested",
+            "evaluation.allowed",
+            "evaluation.denied",
+            "evaluation.response_replayed",
+            "evaluation.completed",
+            "attempt.interrupted",
+            "attempt.failed",
+            "attempt.completed",
+            "node.updated",
+            "insight.created",
+            "insight.invalidated",
+            "family.frozen",
+            "statistical.diagnostic",
+            "decision.recorded",
+            "merge.requested",
+            "merge.completed",
+            "prune.completed",
+            "checkpoint.saved",
+            "resume.reconciled",
+            "contamination.detected",
+            "integrity.failed",
+            "run.frozen",
+            "final.unlocked",
+            "final.consumed",
+            "final.unavailable",
+            "report.generated",
+            "run.stopped"
+          ]
+        },
+        "actor": {"enum": ["coordinator", "executor", "evaluator", "finalizer", "system", "user"]},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "node_id": {"type": ["string", "null"]},
+        "attempt_id": {"type": ["string", "null"]},
+        "split_role": {"enum": ["none", "development", "gate", "final"]},
+        "payload": {"type": "object"},
+        "prev_event_hash": {"oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}]},
+        "event_hash": {"$ref": "#/$defs/Sha256"}
+      },
+      "x-invariants": [
+        "Hash canonical event content excluding event_hash; sequence=1 has prev_event_hash=null.",
+        "Every proposal, validation, evaluation allow/deny/result, failure, retry, merge, prune, unlock and stop is durable before the next state transition.",
+        "The chain is tamper-evident inside the local harness threat model; it does not resist an administrator replacing every artifact and anchor."
+      ]
+    },
+    "QCheckpoint": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "contract_hash", "phase", "cycle", "ledger_head", "tree", "messages", "git", "inflight_attempts", "budget_state", "capability_state", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "contract_hash": {"$ref": "#/$defs/Sha256"},
+        "phase": {"enum": ["setup", "development", "frozen", "finalized", "stopped"]},
+        "cycle": {"type": "integer", "minimum": 0},
+        "ledger_head": {
+          "type": "object",
+          "required": ["last_sequence", "last_event_hash"],
+          "additionalProperties": false,
+          "properties": {
+            "last_sequence": {"type": "integer", "minimum": 1},
+            "last_event_hash": {"$ref": "#/$defs/Sha256"}
+          }
+        },
+        "tree": {"$ref": "#/$defs/ArtifactRef"},
+        "messages": {"$ref": "#/$defs/ArtifactRef"},
+        "git": {
+          "type": "object",
+          "required": ["trunk_branch", "trunk_commit", "active_branches", "worktrees"],
+          "additionalProperties": false,
+          "properties": {
+            "trunk_branch": {"type": "string"},
+            "trunk_commit": {"type": "string", "minLength": 7},
+            "active_branches": {"type": "array", "items": {"type": "string"}},
+            "worktrees": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "inflight_attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["attempt_id", "node_id", "branch", "started_event_id"],
+            "additionalProperties": false,
+            "properties": {
+              "attempt_id": {"$ref": "#/$defs/Identifier"},
+              "node_id": {"$ref": "#/$defs/Identifier"},
+              "branch": {"type": "string"},
+              "started_event_id": {"$ref": "#/$defs/Identifier"},
+              "pid": {"type": ["integer", "null"]}
+            }
+          }
+        },
+        "budget_state": {"type": "object"},
+        "capability_state": {"type": "object"},
+        "pending_user": {"type": ["object", "null"]},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "x-invariants": [
+        "Checkpoint write is atomic, but semantic completeness comes from writing ledger dispatch/start events before external work.",
+        "On resume, ledger is authoritative; dangling attempts become interrupted and any retry receives a new attempt_id.",
+        "Tree and messages hashes must match the artifact references before replay."
+      ]
+    },
+    "ResearchPackage": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "contract", "selected_candidate", "selected_commit", "tree", "research_head", "ledger", "family_snapshot_hash", "reports", "stop_reason", "final_state", "integrity_status", "claim_scope", "missing_artifacts"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "run_id": {"$ref": "#/$defs/Identifier"},
+        "contract": {"$ref": "#/$defs/ArtifactRef"},
+        "selected_candidate": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+        "selected_commit": {"type": ["string", "null"]},
+        "tree": {"$ref": "#/$defs/ArtifactRef"},
+        "research_head": {
+          "type": "object",
+          "required": ["last_sequence", "last_event_hash"],
+          "additionalProperties": false,
+          "properties": {
+            "last_sequence": {"type": "integer", "minimum": 1},
+            "last_event_hash": {"$ref": "#/$defs/Sha256"}
+          }
+        },
+        "ledger": {
+          "type": "object",
+          "required": ["artifact", "last_sequence", "last_event_hash"],
+          "additionalProperties": false,
+          "properties": {
+            "artifact": {"$ref": "#/$defs/ArtifactRef"},
+            "last_sequence": {"type": "integer", "minimum": 1},
+            "last_event_hash": {"$ref": "#/$defs/Sha256"}
+          }
+        },
+        "family_snapshot_hash": {"$ref": "#/$defs/Sha256"},
+        "reports": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/ArtifactRef"}},
+        "stop_reason": {"enum": ["frontier_exhausted", "attempt_budget_exhausted", "wall_time_budget_exhausted", "convergence", "no_valid_candidate", "operator_stop", "integrity_failure", "finalized"]},
+        "final_state": {"enum": ["sealed_unopened", "consumed_terminal", "not_configured"]},
+        "integrity_status": {"enum": ["pass", "partial", "fail"]},
+        "claim_scope": {"enum": ["development_only", "gate_supported", "final_supported"]},
+        "missing_artifacts": {"type": "array", "items": {"type": "string"}}
+      },
+      "x-invariants": [
+        "Reports are generated from research_head and a fixed reporter; report.generated may advance the package ledger head without changing research facts.",
+        "integrity_status=pass requires an empty missing_artifacts array and all identity-critical artifact hashes to verify.",
+        "final_state=sealed_unopened is an expected Goal A state and is not a missing artifact.",
+        "selected_candidate may be null only with an explicit no-valid-candidate or equivalent terminal decision."
+      ]
+    }
+  },
+  "x-q-arbor-interfaces": {
+    "QuantTaskPlugin": {
+      "validate": {"input": "ArtifactRef + QuantResearchContract", "output": "validation receipt + canonical hash + family evidence + list[CheckResult]"},
+      "evaluate": {"input": "validated candidate + authorized EvaluationRequest", "output": "EvaluationResult"},
+      "summarize": {"input": "EvaluationResult", "output": "deterministic split-safe summary"}
+    },
+    "EvaluationBroker": {
+      "authorize": {"input": "principal + split_role + grant_id + contract_hash", "output": "allow or deny ledger event"},
+      "evaluate": {"input": "authorized EvaluationRequest", "output": "EvaluationResult + ledger event"},
+      "unlock_final": {"input": "frozen research package + finalizer grant", "output": "single terminal transition"}
+    },
+    "Ledger": {
+      "append": {"input": "event without hashes", "output": "durable LedgerEvent"},
+      "verify": {"input": "ledger path + expected head", "output": "integrity report"},
+      "replay": {"input": "verified ledger", "output": "tree, budgets, capability state, run summary"}
+    },
+    "RecoveryReporter": {
+      "checkpoint": {"input": "verified ledger head + materialized state", "output": "atomic QCheckpoint"},
+      "resume": {"input": "QCheckpoint + ledger", "output": "reconciled state + interruption events"},
+      "report": {"input": "ResearchPackage sources only", "output": "reproducible HTML/JSON report"}
+    }
+  },
+  "x-q-arbor-state-machines": {
+    "run_phase": ["setup -> development", "development -> frozen", "frozen -> finalized", "setup|development|frozen -> stopped"],
+    "final_capability": ["locked -> unlocked", "unlocked -> consumed", "consumed is terminal"],
+    "attempt": ["dispatched -> running|denied", "running -> evaluating|completed|failed|interrupted", "evaluating -> completed|failed|interrupted", "completed|failed|denied|interrupted are terminal for that attempt_id", "interrupted -> new attempt_id or node stop"],
+    "node": ["pending -> running", "running -> done|needs_retry|invalid|contaminated|incomparable", "done -> merged|pruned", "needs_retry -> running|pruned"]
+  }
+}
