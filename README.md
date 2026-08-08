@@ -33,3 +33,5 @@ q-arbor-contract show-hash frozen.json
 ```
 
 `project_to_arbor(...)` returns separate `tree_meta()`, `config_overrides()`, `plugin_overrides()`, and `audit_metadata()` views. Its development evaluation command is a forward contract for C9 and is intentionally not executable in C7.
+
+The tracked `configs/`, `benchmarks/`, `artifacts/`, and `.q-arbor/sessions/` READMEs freeze ownership and data boundaries. Generated artifacts, sessions, and all raw market data remain ignored.
