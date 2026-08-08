@@ -4,8 +4,11 @@ import copy
 import fcntl
 import json
 import multiprocessing
+import os
 import queue
+import stat
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -308,6 +311,23 @@ def test_event_id_factory_collision_is_rejected_before_append(
     store.verify()
 
 
+def test_timezone_aware_clock_is_normalized_to_rfc3339_utc(
+    tmp_path: Path,
+) -> None:
+    offset = timezone(timedelta(seconds=30))
+    store = HypothesisTreeStore.create(
+        tmp_path / "state",
+        run_id="run.offset-clock",
+        contract_hash=CONTRACT_HASH,
+        root=_root_draft(),
+        clock=lambda: datetime(2026, 8, 9, 12, 0, tzinfo=offset),
+        event_id_factory=deterministic_event_id,
+    )
+
+    assert _events(store.directory)[0]["timestamp"] == "2026-08-09T11:59:30Z"
+    assert store.verify().event_count == 1
+
+
 class InjectedEventFsyncCrash(RuntimeError):
     pass
 
@@ -582,6 +602,140 @@ def test_lock_release_io_failure_is_typed(
         original_flock(descriptor, operation)
 
     monkeypatch.setattr(fcntl, "flock", fail_unlock)
+    with pytest.raises(TreePersistenceError):
+        store.load()
+
+
+def test_lock_acquisition_failure_closes_open_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "state"
+    store = _create_store(directory)
+    lock_path = directory / "tree.lock"
+    original_open = os.open
+    original_close = os.close
+    opened_lock_descriptors: list[int] = []
+    closed_descriptors: list[int] = []
+
+    def track_open(path: os.PathLike[str] | str, *args: Any) -> int:
+        descriptor = original_open(path, *args)
+        if Path(path) == lock_path:
+            opened_lock_descriptors.append(descriptor)
+        return descriptor
+
+    def track_close(descriptor: int) -> None:
+        closed_descriptors.append(descriptor)
+        original_close(descriptor)
+
+    def fail_acquisition(_descriptor: int, operation: int) -> None:
+        assert operation == fcntl.LOCK_EX
+        raise OSError("injected lock acquisition failure")
+
+    monkeypatch.setattr(os, "open", track_open)
+    monkeypatch.setattr(os, "close", track_close)
+    monkeypatch.setattr(fcntl, "flock", fail_acquisition)
+    with pytest.raises(TreePersistenceError):
+        store.load()
+
+    assert len(opened_lock_descriptors) == 1
+    descriptor = opened_lock_descriptors[0]
+    was_closed = descriptor in closed_descriptors
+    if not was_closed:
+        original_close(descriptor)
+    assert was_closed, "failed flock acquisition leaked its open descriptor"
+
+
+def test_journal_descriptor_close_failure_is_typed_and_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "state"
+    store = _create_store(directory)
+    events_path = directory / "tree.events.jsonl"
+    original_open = os.open
+    original_close = os.close
+    journal_descriptors: set[int] = set()
+
+    def track_open(path: os.PathLike[str] | str, *args: Any) -> int:
+        descriptor = original_open(path, *args)
+        if Path(path) == events_path:
+            journal_descriptors.add(descriptor)
+        return descriptor
+
+    def fail_journal_close(descriptor: int) -> None:
+        original_close(descriptor)
+        if descriptor in journal_descriptors:
+            journal_descriptors.remove(descriptor)
+            raise OSError("injected journal close failure")
+
+    monkeypatch.setattr(os, "open", track_open)
+    monkeypatch.setattr(os, "close", fail_journal_close)
+    with pytest.raises(TreePersistenceError):
+        store.apply(
+            TreeMutation.add_node(_child_draft("child", 2)),
+            expected_revision=0,
+            idempotency_key="add.child",
+        )
+
+    monkeypatch.setattr(os, "open", original_open)
+    monkeypatch.setattr(os, "close", original_close)
+    recovered = store.recover()
+    assert recovered.revision == 1
+    assert node_record(recovered, "child")["id"] == "child"
+
+
+def test_journal_directory_fsync_failure_is_typed_and_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _create_store(tmp_path / "state")
+    original_fsync = os.fsync
+
+    def fail_directory_fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("injected directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_directory_fsync)
+    with pytest.raises(TreePersistenceError):
+        store.apply(
+            TreeMutation.add_node(_child_draft("child", 2)),
+            expected_revision=0,
+            idempotency_key="add.child",
+        )
+
+    monkeypatch.setattr(os, "fsync", original_fsync)
+    recovered = store.recover()
+    assert recovered.revision == 1
+    assert node_record(recovered, "child")["id"] == "child"
+
+
+@pytest.mark.parametrize("failure_point", ["stat", "read"])
+def test_snapshot_filesystem_errors_are_typed_as_persistence_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    directory = tmp_path / "state"
+    store = _create_store(directory)
+    tree_path = directory / "tree.json"
+    if failure_point == "stat":
+        original_stat = Path.stat
+
+        def fail_tree_stat(path: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+            if path == tree_path:
+                raise PermissionError("injected snapshot stat failure")
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", fail_tree_stat)
+    else:
+        original_read_bytes = Path.read_bytes
+
+        def fail_tree_read(path: Path) -> bytes:
+            if path == tree_path:
+                raise PermissionError("injected snapshot read failure")
+            return original_read_bytes(path)
+
+        monkeypatch.setattr(Path, "read_bytes", fail_tree_read)
+
     with pytest.raises(TreePersistenceError):
         store.load()
 
