@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from datetime import date, datetime, timezone
-from functools import lru_cache
-from hashlib import sha256
-from importlib import resources
 import fnmatch
 import json
 import math
 import os
-from pathlib import Path
 import re
 import tempfile
+import unicodedata
+from collections.abc import Mapping, Sequence
+from datetime import UTC, date, datetime
+from functools import cache, lru_cache
+from hashlib import sha256
+from importlib import resources
+from itertools import pairwise
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias, cast
-import unicodedata
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -28,13 +29,16 @@ from .errors import (
     ContractSchemaError,
 )
 
-
 JSONScalar: TypeAlias = type(None) | bool | int | float | str
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
-FrozenJSON: TypeAlias = JSONScalar | tuple["FrozenJSON", ...] | Mapping[str, "FrozenJSON"]
+FrozenJSON: TypeAlias = (
+    JSONScalar | tuple["FrozenJSON", ...] | Mapping[str, "FrozenJSON"]
+)
 
 _SCHEMA_NAME: Final = "C6_INTERFACE_SCHEMA.json"
-_SCHEMA_SHA256: Final = "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+_SCHEMA_SHA256: Final = (
+    "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+)
 _HASH_PLACEHOLDER: Final = "0" * 64
 _SPLIT_ORDER: Final = ("development", "gate", "final")
 _EXPECTED_SPLITS: Final = {
@@ -102,7 +106,9 @@ def _normalized_string(value: str) -> str:
     try:
         normalized.encode("utf-8", errors="strict")
     except UnicodeEncodeError as exc:
-        raise ContractDecodeError("JSON contains a string that cannot be encoded as UTF-8") from exc
+        raise ContractDecodeError(
+            "JSON contains a string that cannot be encoded as UTF-8"
+        ) from exc
     return normalized
 
 
@@ -155,7 +161,9 @@ def _normalize_mapping(mapping: Mapping[str, Any]) -> dict[str, JSONValue]:
     if not isinstance(mapping, Mapping):
         raise ContractDecodeError("contract must be a JSON object")
     normalized = _normalize_json(mapping, set())
-    if not isinstance(normalized, dict):  # Kept explicit for type-checkers and custom mappings.
+    if not isinstance(
+        normalized, dict
+    ):  # Kept explicit for type-checkers and custom mappings.
         raise ContractDecodeError("contract must be a JSON object")
     return normalized
 
@@ -170,7 +178,9 @@ def _canonical_normalized_bytes(mapping: Mapping[str, Any]) -> bytes:
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
-        raise ContractDecodeError("contract cannot be encoded as canonical JSON") from exc
+        raise ContractDecodeError(
+            "contract cannot be encoded as canonical JSON"
+        ) from exc
 
 
 def canonical_contract_bytes(mapping: Mapping[str, Any]) -> bytes:
@@ -241,7 +251,9 @@ def _validate_schema(mapping: Mapping[str, JSONValue]) -> None:
     except ContractSchemaError:
         raise
     except Exception as exc:  # jsonschema reference failures must remain fail-closed.
-        raise ContractSchemaError("unable to evaluate the frozen contract schema") from exc
+        raise ContractSchemaError(
+            "unable to evaluate the frozen contract schema"
+        ) from exc
     if error is not None:
         location = _display_schema_path(list(error.absolute_path))
         rule = str(error.validator or "schema")
@@ -255,13 +267,15 @@ def _parse_boundary(value: str, path: str) -> tuple[str, date | datetime]:
         if _DATE_RE.fullmatch(value):
             return "date", date.fromisoformat(value)
         if _DATETIME_RE.fullmatch(value):
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value)
             if parsed.tzinfo is None or parsed.utcoffset() is None:
                 raise ValueError
-            return "datetime", parsed.astimezone(timezone.utc)
+            return "datetime", parsed.astimezone(UTC)
     except ValueError as exc:
         raise ContractInvariantError(f"{path} is not a valid time boundary") from exc
-    raise ContractInvariantError(f"{path} must be an ISO date or timezone-aware datetime")
+    raise ContractInvariantError(
+        f"{path} must be an ISO date or timezone-aware datetime"
+    )
 
 
 def _validate_time_invariants(contract: Mapping[str, JSONValue]) -> None:
@@ -284,16 +298,20 @@ def _validate_time_invariants(contract: Mapping[str, JSONValue]) -> None:
             time_range["end"], f"data.splits.{name}.time_range.end"
         )
         if start_kind != end_kind:
-            raise ContractInvariantError(f"{name} split mixes date and datetime boundaries")
+            raise ContractInvariantError(
+                f"{name} split mixes date and datetime boundaries"
+            )
         if start >= end:
             raise ContractInvariantError(f"{name} split must start before it ends")
         if common_kind is None:
             common_kind = start_kind
         elif common_kind != start_kind:
-            raise ContractInvariantError("split time ranges must use one boundary format")
+            raise ContractInvariantError(
+                "split time ranges must use one boundary format"
+            )
         parsed_ranges[name] = (start_kind, start, end)
 
-    for left_name, right_name in zip(_SPLIT_ORDER, _SPLIT_ORDER[1:]):
+    for left_name, right_name in pairwise(_SPLIT_ORDER):
         left_end = parsed_ranges[left_name][2]
         right_start = parsed_ranges[right_name][1]
         if left_end >= right_start:
@@ -316,7 +334,10 @@ def _validate_path_syntax(path: str, field: str) -> list[str]:
 
 
 def _fixed_prefix(pattern: str) -> str:
-    index = min((pattern.find(char) for char in _GLOB_META if char in pattern), default=len(pattern))
+    index = min(
+        (pattern.find(char) for char in _GLOB_META if char in pattern),
+        default=len(pattern),
+    )
     return pattern[:index]
 
 
@@ -352,14 +373,12 @@ def _segment_patterns_overlap(left: str, right: str) -> bool:
         return fnmatch.fnmatchcase(right, left)
     if not _literal_prefixes_compatible(_fixed_prefix(left), _fixed_prefix(right)):
         return False
-    if not _literal_suffixes_compatible(_fixed_suffix(left), _fixed_suffix(right)):
-        return False
     # Remaining wildcard-language intersections are conservatively considered possible.
-    return True
+    return _literal_suffixes_compatible(_fixed_suffix(left), _fixed_suffix(right))
 
 
 def _glob_patterns_overlap(left: list[str], right: list[str]) -> bool:
-    @lru_cache(maxsize=None)
+    @cache
     def visit(left_index: int, right_index: int) -> bool:
         if left_index == len(left) and right_index == len(right):
             return True
@@ -402,11 +421,15 @@ def _validate_path_invariants(contract: Mapping[str, JSONValue]) -> None:
     for _, editable_segments in editable:
         for _, protected_segments in protected:
             if _glob_patterns_overlap(editable_segments, protected_segments):
-                raise ContractInvariantError("editable and protected path surfaces overlap")
+                raise ContractInvariantError(
+                    "editable and protected path surfaces overlap"
+                )
     for _, output_segments in required:
         for _, protected_segments in protected:
             if _glob_patterns_overlap(output_segments, protected_segments):
-                raise ContractInvariantError("required output and protected path surfaces overlap")
+                raise ContractInvariantError(
+                    "required output and protected path surfaces overlap"
+                )
 
 
 def _validate_role_and_split_invariants(contract: Mapping[str, JSONValue]) -> None:
@@ -414,7 +437,9 @@ def _validate_role_and_split_invariants(contract: Mapping[str, JSONValue]) -> No
     if capabilities["executor_roles"] != ["development"]:
         raise ContractInvariantError("executor capability must be development-only")
     if set(capabilities["coordinator_roles"]) != {"development", "gate"}:
-        raise ContractInvariantError("coordinator capability must cover development and gate")
+        raise ContractInvariantError(
+            "coordinator capability must cover development and gate"
+        )
     if capabilities["finalizer_roles"] != ["final"]:
         raise ContractInvariantError("finalizer capability must be final-only")
 
@@ -423,13 +448,17 @@ def _validate_role_and_split_invariants(contract: Mapping[str, JSONValue]) -> No
     for name, (expected_role, expected_sealed) in _EXPECTED_SPLITS.items():
         split = splits[name]
         if split["role"] != expected_role or split["sealed"] is not expected_sealed:
-            raise ContractInvariantError(f"{name} split role or sealed state is inconsistent")
+            raise ContractInvariantError(
+                f"{name} split role or sealed state is inconsistent"
+            )
     if splits["final"]["query_budget"] != 1:
         raise ContractInvariantError("final split query budget must equal one")
 
     budgets = cast(dict[str, int], contract["budgets"])
     if splits["development"]["query_budget"] > budgets["max_dev_queries"]:
-        raise ContractInvariantError("development split query budget exceeds the run budget")
+        raise ContractInvariantError(
+            "development split query budget exceeds the run budget"
+        )
     if splits["gate"]["query_budget"] > budgets["max_gate_queries"]:
         raise ContractInvariantError("gate split query budget exceeds the run budget")
     if budgets["max_final_queries"] != 1:
@@ -440,7 +469,9 @@ def _validate_metric_invariants(contract: Mapping[str, JSONValue]) -> None:
     metrics = cast(dict[str, Any], contract["metrics"])
     primary_name = cast(dict[str, str], metrics["primary"])["name"]
     diagnostic_names = [item["name"] for item in metrics["diagnostics"]]
-    if primary_name in diagnostic_names or len(diagnostic_names) != len(set(diagnostic_names)):
+    if primary_name in diagnostic_names or len(diagnostic_names) != len(
+        set(diagnostic_names)
+    ):
         raise ContractInvariantError("metric names must be unique")
     constraint_names = [item["name"] for item in metrics["hard_constraints"]]
     if len(constraint_names) != len(set(constraint_names)):
@@ -456,7 +487,13 @@ def _key_is_secret_like(key: str) -> bool:
         return True
     return any(
         marker in compact
-        for marker in ("apikey", "clientsecret", "privatekey", "authtoken", "accesstoken")
+        for marker in (
+            "apikey",
+            "clientsecret",
+            "privatekey",
+            "authtoken",
+            "accesstoken",
+        )
     )
 
 
@@ -464,7 +501,9 @@ def _scan_secret_keys(value: JSONValue, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if _key_is_secret_like(key):
-                raise ContractInvariantError(f"secret-like field is forbidden at {path}")
+                raise ContractInvariantError(
+                    f"secret-like field is forbidden at {path}"
+                )
             _scan_secret_keys(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -480,14 +519,14 @@ def _validate_invariants(contract: Mapping[str, JSONValue]) -> None:
     _scan_secret_keys(cast(JSONValue, contract))
 
 
-def _validate_normalized(
-    normalized: dict[str, JSONValue], *, verify_hash: bool
-) -> str:
+def _validate_normalized(normalized: dict[str, JSONValue], *, verify_hash: bool) -> str:
     _validate_schema(normalized)
     _validate_invariants(normalized)
     computed = _compute_normalized_hash(normalized)
     if verify_hash and normalized["contract_hash"] != computed:
-        raise ContractHashMismatch("contract_hash does not match canonical contract content")
+        raise ContractHashMismatch(
+            "contract_hash does not match canonical contract content"
+        )
     return computed
 
 
@@ -511,7 +550,7 @@ def _deep_thaw(value: FrozenJSON) -> JSONValue:
 class QuantResearchContract:
     """An immutable, normalized snapshot of a validated research contract."""
 
-    __slots__ = ("_canonical", "_sha256", "_snapshot", "_initialized")
+    __slots__ = ("_canonical", "_initialized", "_sha256", "_snapshot")
 
     def __init__(self, mapping: Mapping[str, Any], *, verify_hash: bool = True) -> None:
         normalized = _normalize_mapping(mapping)
@@ -521,7 +560,7 @@ class QuantResearchContract:
     @classmethod
     def _from_normalized(
         cls, normalized: dict[str, JSONValue], digest: str
-    ) -> "QuantResearchContract":
+    ) -> QuantResearchContract:
         instance = cls.__new__(cls)
         instance._initialize(normalized, digest)
         return instance
@@ -580,10 +619,10 @@ class QuantResearchContract:
                 except FileNotFoundError:
                     pass
 
-    def __copy__(self) -> "QuantResearchContract":
+    def __copy__(self) -> QuantResearchContract:
         return self
 
-    def __deepcopy__(self, memo: dict[int, object]) -> "QuantResearchContract":
+    def __deepcopy__(self, memo: dict[int, object]) -> QuantResearchContract:
         memo[id(self)] = self
         return self
 

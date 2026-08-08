@@ -6,8 +6,8 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import arbor
 from arbor.coordinator.config import CoordinatorConfig
@@ -61,7 +61,9 @@ def main() -> int:
     checkout_root = arbor_file.parent.parent
     commit_file = checkout_root / ".git"
     if not commit_file.exists():
-        raise RuntimeError("Arbor module is not loaded from the expected source checkout")
+        raise RuntimeError(
+            "Arbor module is not loaded from the expected source checkout"
+        )
     actual_commit = subprocess.run(
         ["git", "-C", str(checkout_root), "rev-parse", "HEAD"],
         check=True,

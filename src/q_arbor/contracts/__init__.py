@@ -19,15 +19,15 @@ from .errors import (
 )
 
 __all__ = [
-    "ContractError",
     "ContractDecodeError",
-    "ContractSchemaError",
-    "ContractInvariantError",
+    "ContractError",
     "ContractHashMismatch",
+    "ContractInvariantError",
+    "ContractSchemaError",
     "QuantResearchContract",
-    "load_contract",
-    "freeze_contract",
-    "validate_contract",
     "canonical_contract_bytes",
     "compute_contract_hash",
+    "freeze_contract",
+    "load_contract",
+    "validate_contract",
 ]

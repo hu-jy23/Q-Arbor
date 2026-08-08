@@ -7,7 +7,9 @@ import json
 from importlib.resources import files
 from typing import Any
 
-FROZEN_SCHEMA_SHA256 = "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+FROZEN_SCHEMA_SHA256 = (
+    "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+)
 
 
 class FrozenSchemaDrift(RuntimeError):

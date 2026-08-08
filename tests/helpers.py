@@ -9,7 +9,6 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_FIXTURES = REPOSITORY_ROOT / "tests" / "fixtures" / "contracts"
 
@@ -60,7 +59,12 @@ def run_contract_cli(*arguments: object) -> subprocess.CompletedProcess[str]:
         else os.pathsep.join((source_root, existing_pythonpath))
     )
     return subprocess.run(
-        [sys.executable, "-m", "q_arbor.contracts.cli", *(str(arg) for arg in arguments)],
+        [
+            sys.executable,
+            "-m",
+            "q_arbor.contracts.cli",
+            *(str(arg) for arg in arguments),
+        ],
         cwd=REPOSITORY_ROOT,
         env=env,
         check=False,

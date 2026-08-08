@@ -13,7 +13,6 @@ from q_arbor.contracts import QuantResearchContract, freeze_contract
 from q_arbor.integrations import ArborRunProjection, project_to_arbor
 from tests.helpers import valid_contract_mapping
 
-
 BASE_KEYS = {
     "projection_version",
     "eval_cmd",
@@ -254,9 +253,7 @@ def test_invalid_contract_path_fails_closed(
             trunk_branch="q-arbor/trunk",
         )
     with pytest.raises(ValueError):
-        project_to_arbor(
-            contract, contract_path=tmp_path, trunk_branch="q-arbor/trunk"
-        )
+        project_to_arbor(contract, contract_path=tmp_path, trunk_branch="q-arbor/trunk")
     with pytest.raises(ValueError):
         project_to_arbor(
             contract,
@@ -266,9 +263,7 @@ def test_invalid_contract_path_fails_closed(
     invalid = tmp_path / "invalid.json"
     invalid.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError):
-        project_to_arbor(
-            contract, contract_path=invalid, trunk_branch="q-arbor/trunk"
-        )
+        project_to_arbor(contract, contract_path=invalid, trunk_branch="q-arbor/trunk")
 
 
 def test_contract_path_hash_drift_fails_closed(

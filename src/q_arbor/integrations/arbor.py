@@ -19,7 +19,6 @@ from typing import Any
 
 from q_arbor.contracts import QuantResearchContract, load_contract
 
-
 _PROJECTION_VERSION = "q-arbor.arbor-metadata.v1"
 _HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _ALWAYS_KEYS = (
@@ -133,7 +132,9 @@ def project_to_arbor(
 
     direction = _string_at(primary, "direction")
     if direction not in {"maximize", "minimize"}:
-        raise ValueError("contract primary metric direction must be maximize or minimize")
+        raise ValueError(
+            "contract primary metric direction must be maximize or minimize"
+        )
 
     payload_hash = _string_at(payload, "contract_hash")
     if payload_hash != contract_hash:
@@ -197,7 +198,7 @@ def _read_contract(contract: object) -> tuple[Mapping[str, Any], str]:
 def _mapping_at(mapping: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = mapping.get(key)
     if not isinstance(value, Mapping):
-        raise ValueError(f"contract field {key!r} must be an object")
+        raise TypeError(f"contract field {key!r} must be an object")
     return value
 
 
@@ -255,7 +256,9 @@ def _contract_path(value: str | os.PathLike[str], expected_hash: str) -> str:
         raise ValueError("contract_path must resolve to a regular file")
     persisted = load_contract(resolved)
     if persisted.sha256 != expected_hash:
-        raise ValueError("contract_path does not contain the projected contract snapshot")
+        raise ValueError(
+            "contract_path does not contain the projected contract snapshot"
+        )
     return str(resolved)
 
 
@@ -273,7 +276,9 @@ def _branch_name(value: object) -> str:
         or ".." in value
         or "@{" in value
         or any(character in value for character in " ~^:?*[\\")
-        or any(part.endswith(".lock") or part.startswith(".") for part in value.split("/"))
+        or any(
+            part.endswith(".lock") or part.startswith(".") for part in value.split("/")
+        )
     ):
         raise ValueError("trunk_branch is not a safe branch name")
     return value

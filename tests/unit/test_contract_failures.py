@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from q_arbor.contracts import (
-    ContractError,
     ContractDecodeError,
+    ContractError,
     ContractHashMismatch,
     ContractInvariantError,
     ContractSchemaError,
@@ -60,7 +60,9 @@ def test_complete_contract_freeze_load_and_hash_round_trip(tmp_path: Path) -> No
     assert frozen_mapping["contract_hash"] == expected_hash
     assert compute_contract_hash(draft) == expected_hash
     assert compute_contract_hash(reordered) == expected_hash
-    assert canonical_contract_bytes(reordered) == canonical_contract_bytes(frozen_mapping)
+    assert canonical_contract_bytes(reordered) == canonical_contract_bytes(
+        frozen_mapping
+    )
     assert json.loads(frozen.to_json()) == frozen_mapping
     assert frozen.to_json().encode("utf-8") == canonical_contract_bytes(frozen_mapping)
 
@@ -71,7 +73,9 @@ def test_complete_contract_freeze_load_and_hash_round_trip(tmp_path: Path) -> No
     assert snapshot.read_bytes() == canonical_contract_bytes(frozen_mapping)
     assert loaded.sha256 == frozen.sha256
     assert loaded.to_dict() == frozen.to_dict()
-    assert canonical_contract_bytes(loaded.to_dict()) == canonical_contract_bytes(frozen_mapping)
+    assert canonical_contract_bytes(loaded.to_dict()) == canonical_contract_bytes(
+        frozen_mapping
+    )
 
 
 def test_missing_required_field_is_rejected_before_hash_check() -> None:
@@ -95,7 +99,9 @@ def test_nfc_equivalent_value_freezes_to_the_same_snapshot_and_hash() -> None:
     composed = valid_contract_mapping()
     decomposed = valid_contract_mapping()
     question = decomposed["objective"]["research_question"]
-    decomposed["objective"]["research_question"] = unicodedata.normalize("NFD", question)
+    decomposed["objective"]["research_question"] = unicodedata.normalize(
+        "NFD", question
+    )
     assert decomposed["objective"]["research_question"] != question
 
     normalized = freeze_contract(decomposed)
@@ -268,7 +274,9 @@ def test_invalid_metric_direction_is_rejected() -> None:
         ("development", "dataset_id"),
     ],
 )
-def test_identity_fields_reject_non_identifiers(section: str | None, field: str) -> None:
+def test_identity_fields_reject_non_identifiers(
+    section: str | None, field: str
+) -> None:
     mapping = _frozen_contract_mapping()
     target = mapping if section is None else mapping["data"]["splits"][section]
     target[field] = "contains spaces"

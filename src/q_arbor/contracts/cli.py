@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 import sys
-from typing import Sequence
+from collections.abc import Sequence
+from pathlib import Path
 
 from .core import _load_contract_mapping, freeze_contract, load_contract
 from .errors import ContractError
