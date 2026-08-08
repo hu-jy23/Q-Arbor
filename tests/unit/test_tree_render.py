@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+import pytest
+
 from q_arbor.hypotheses import (
+    TreePersistenceError,
     QHypothesisTree,
     export_tree_json,
     import_arbor_tree,
@@ -77,3 +81,23 @@ def test_html_writer_writes_exact_utf8_render(tmp_path: Path) -> None:
         tree, title="Deterministic tree"
     )
     assert not list(tmp_path.glob(".tree report.html.*.tmp"))
+
+
+def test_html_writer_cleanup_failure_remains_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree()
+    destination = tmp_path / "tree.html"
+    destination.write_text("sentinel", encoding="utf-8")
+
+    def fail_replace(source: os.PathLike[str], target: os.PathLike[str]) -> None:
+        raise OSError("injected replace failure")
+
+    def fail_unlink(path: os.PathLike[str]) -> None:
+        raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr(os, "unlink", fail_unlink)
+    with pytest.raises(TreePersistenceError, match="clean up temporary tree HTML"):
+        write_tree_html(tree, destination)
+    assert destination.read_text(encoding="utf-8") == "sentinel"

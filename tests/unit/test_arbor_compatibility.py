@@ -277,3 +277,55 @@ def test_incompatible_arbor_graph_fails_closed(mutation: object) -> None:
     cast(Any, mutation)(legacy)
     with pytest.raises(TreeCompatibilityError):
         import_arbor_tree(legacy, run_id="run.bad", contract_hash=CONTRACT_HASH)
+
+
+@pytest.mark.parametrize("container", ["mapping", "list"])
+def test_deep_raw_input_has_typed_compatibility_failure(container: str) -> None:
+    nested: Any = {} if container == "mapping" else []
+    for _ in range(1100):
+        nested = {"nested": nested} if container == "mapping" else [nested]
+    legacy = {
+        "id": "ROOT",
+        "parent_id": None,
+        "children_ids": [],
+        "depth": 0,
+        "hypothesis": "deep-input probe",
+        "status": "pending",
+        "unknown_deep_field": nested,
+    }
+
+    with pytest.raises(TreeCompatibilityError, match="nesting is too deep"):
+        import_arbor_tree(
+            legacy,
+            run_id="run.deep-input",
+            contract_hash=CONTRACT_HASH,
+        )
+
+
+def test_deep_legacy_chain_has_typed_compatibility_failure() -> None:
+    node_count = 1100
+    nodes: dict[str, dict[str, Any]] = {}
+    for index in range(node_count):
+        node_id = str(index)
+        nodes[node_id] = {
+            "id": node_id,
+            "parent_id": None if index == 0 else str(index - 1),
+            "children_ids": [] if index + 1 == node_count else [str(index + 1)],
+            "depth": index,
+            "hypothesis": f"chain node {index}",
+            "status": "pending",
+        }
+    legacy = {
+        "version": 3,
+        "meta": {},
+        "root_id": "0",
+        "max_depth": node_count,
+        "nodes": nodes,
+    }
+
+    with pytest.raises(TreeCompatibilityError, match="topology is too deep"):
+        import_arbor_tree(
+            legacy,
+            run_id="run.deep-chain",
+            contract_hash=CONTRACT_HASH,
+        )

@@ -420,7 +420,10 @@ def _parse_tree(mapping: Mapping[str, JSONValue]) -> _LegacyTree:
             visit(child_id, depth + 1)
         active.remove(node_id)
 
-    visit(root_id, 0)
+    try:
+        visit(root_id, 0)
+    except RecursionError as exc:
+        _fail("legacy Arbor tree topology is too deep", cause=exc)
     if set(depths) != set(records):
         _fail("legacy Arbor tree contains nodes unreachable from root_id")
     for node_id, supplied in supplied_depth.items():
@@ -909,7 +912,10 @@ def _sha256(value: object, field: str) -> str:
 def _normalize_mapping(value: object) -> dict[str, JSONValue]:
     if not isinstance(value, Mapping):
         _fail("legacy Arbor input must be a mapping")
-    normalized = _normalize_json(value, set())
+    try:
+        normalized = _normalize_json(value, set())
+    except RecursionError as exc:
+        _fail("legacy Arbor input nesting is too deep", cause=exc)
     if not isinstance(normalized, dict):
         _fail("legacy Arbor input must normalize to an object")
     return normalized
@@ -961,8 +967,8 @@ def _normalize_json(value: object, active: set[int]) -> JSONValue:
 
 
 def _canonical_bytes(value: object) -> bytes:
-    normalized = _normalize_json(value, set())
     try:
+        normalized = _normalize_json(value, set())
         return json.dumps(
             normalized,
             ensure_ascii=False,

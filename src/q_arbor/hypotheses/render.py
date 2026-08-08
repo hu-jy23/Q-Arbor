@@ -138,6 +138,12 @@ def write_tree_html(
                 os.unlink(temporary_path)
             except FileNotFoundError:
                 pass
+            except OSError as exc:
+                from q_arbor.hypotheses import TreePersistenceError
+
+                raise TreePersistenceError(
+                    "unable to clean up temporary tree HTML"
+                ) from exc
 
 
 def _checked_tree(tree: object) -> QHypothesisTree:
