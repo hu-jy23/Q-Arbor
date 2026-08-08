@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import json
 import multiprocessing
 import queue
@@ -164,6 +165,7 @@ def test_store_serial_mutations_emit_canonical_c6_events_and_replay(
         2,
         3,
     ]
+    assert initial.run_state == "development"
     assert pruned.ledger_head["last_sequence"] == pruned.revision + 1
     assert node_record(pruned, "child")["status"] == "pruned"
     assert (directory / "tree.json").is_file()
@@ -253,6 +255,57 @@ def test_store_idempotent_retry_stale_revision_and_key_conflict(
 
     assert store.load().to_dict() == accepted.to_dict()
     assert (directory / "tree.events.jsonl").read_bytes() == event_bytes
+
+
+def test_idempotency_key_cannot_hide_a_different_actor(tmp_path: Path) -> None:
+    directory = tmp_path / "state"
+    store = _create_store(directory)
+    mutation = TreeMutation.add_node(_child_draft("child", 2))
+    accepted = store.apply(
+        mutation,
+        expected_revision=0,
+        idempotency_key="request.actor-bound",
+        actor="coordinator",
+    )
+    event_bytes = (directory / "tree.events.jsonl").read_bytes()
+
+    with pytest.raises(TreeConflictError):
+        store.apply(
+            mutation,
+            expected_revision=0,
+            idempotency_key="request.actor-bound",
+            actor="user",
+        )
+
+    assert store.load().to_dict() == accepted.to_dict()
+    assert (directory / "tree.events.jsonl").read_bytes() == event_bytes
+
+
+def test_event_id_factory_collision_is_rejected_before_append(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "state"
+    store = HypothesisTreeStore.create(
+        directory,
+        run_id="run.event-id-collision",
+        contract_hash=CONTRACT_HASH,
+        root=_root_draft(),
+        clock=deterministic_clock,
+        event_id_factory=lambda _sequence: "event.reused",
+    )
+    journal_before = (directory / "tree.events.jsonl").read_bytes()
+    snapshot_before = store.load().to_dict()
+
+    with pytest.raises(TreePersistenceError):
+        store.apply(
+            TreeMutation.add_node(_child_draft("child", 2)),
+            expected_revision=0,
+            idempotency_key="add.child",
+        )
+
+    assert (directory / "tree.events.jsonl").read_bytes() == journal_before
+    assert store.load().to_dict() == snapshot_before
+    store.verify()
 
 
 class InjectedEventFsyncCrash(RuntimeError):
@@ -476,6 +529,26 @@ def test_rehashed_semantic_event_tamper_is_rejected(
         HypothesisTreeStore.open(directory).recover()
 
 
+def test_rehashed_non_datetime_event_timestamp_is_rejected(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "state"
+    store = _create_store(directory)
+    store.apply(
+        TreeMutation.add_node(_child_draft("child", 2)),
+        expected_revision=0,
+        idempotency_key="add.child",
+    )
+    events = _events(directory)
+    events[-1]["timestamp"] = "definitely-not-a-date-time"
+    events[-1]["event_hash"] = _event_hash(events[-1])
+    _rewrite_events(directory, events)
+    (directory / "tree.json").unlink()
+
+    with pytest.raises(TreeIntegrityError):
+        HypothesisTreeStore.open(directory).recover()
+
+
 def test_missing_journal_is_an_integrity_failure(tmp_path: Path) -> None:
     directory = tmp_path / "state"
     _create_store(directory)
@@ -495,6 +568,22 @@ def test_open_state_directory_io_failures_are_typed(
 
     with pytest.raises(TreePersistenceError):
         HypothesisTreeStore.open(path).recover()
+
+
+def test_lock_release_io_failure_is_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _create_store(tmp_path / "state")
+    original_flock = fcntl.flock
+
+    def fail_unlock(descriptor: int, operation: int) -> None:
+        if operation == fcntl.LOCK_UN:
+            raise OSError("injected unlock failure")
+        original_flock(descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fail_unlock)
+    with pytest.raises(TreePersistenceError):
+        store.load()
 
 
 def test_multiprocess_mutations_are_serialized_without_lost_updates(

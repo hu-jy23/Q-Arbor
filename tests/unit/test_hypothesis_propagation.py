@@ -92,7 +92,7 @@ def _failure_insight_updates(
         "contamination": "contaminated",
         "incomparable": "incomparable",
     }.get(failure_type, "invalid")
-    if validity != "active":
+    if validity == "invalidated":
         insight["invalidation_reason"] = "qualification fixture"
     return {
         "status": status,
@@ -198,20 +198,13 @@ def test_same_insight_id_with_different_content_is_conflict(tmp_path: Path) -> N
         "evidence_refs": copy.deepcopy(source["evidence_refs"]),
         "insights": [conflicting],
     }
-    _apply(
-        store,
-        TreeMutation.update_node("root", root_updates),
-        "seed.conflicting.insight",
-    )
     before = store.load().to_dict()
 
     with pytest.raises(TreeConflictError):
         _apply(
             store,
-            TreeMutation.propagate_insight(
-                "child", "root", "insight.child"
-            ),
-            "propagate.conflicting",
+            TreeMutation.update_node("root", root_updates),
+            "seed.conflicting.insight",
         )
 
     assert store.load().to_dict() == before
@@ -275,6 +268,7 @@ def test_propagation_rejects_sibling_transfer(tmp_path: Path) -> None:
             lambda: {
                 "evidence_status": "invalidated",
                 "validity": "invalidated",
+                "grade": "unverified",
             },
             id="invalidated-evidence",
         ),
@@ -282,6 +276,7 @@ def test_propagation_rejects_sibling_transfer(tmp_path: Path) -> None:
             lambda: {
                 "evidence_status": "contaminated",
                 "validity": "invalidated",
+                "grade": "unverified",
                 "failure_type": "contamination",
             },
             id="contaminated-evidence",
