@@ -41,7 +41,9 @@ Split content is bound by each sanctioned `manifest_sha256`, and the three role 
 
 `q_arbor.integrations` must export `ArborRunProjection` and `project_to_arbor(contract, *, contract_path, trunk_branch, baseline_score=None)`.
 
-The projection exposes a new mapping on every call. It includes development `eval_cmd`, `metric_direction`, `trunk_branch`, `protected_paths`, `required_outputs`, contract/baseline references, and optional finite `baseline_score`. Its persisted `contract_path` must load as the same contract hash. It never includes raw gate/final paths, split manifests, hidden seeds, credentials, tokens, or `eval_cmd_test`; C10 owns gate capability plumbing.
+The projection accepts an exact `QuantResearchContract`, revalidates its detached payload, recomputes its hash, and compares its canonical bytes. The persisted `contract_path` must load to that same canonical snapshot, not merely repeat a claimed digest. Each projection view returns detached state. This closes the C6 C01/J01/J04 identity seam before Arbor receives mutable metadata.
+
+The projection includes development `eval_cmd`, `metric_direction`, a syntactically unambiguous non-default `trunk_branch`, `protected_paths`, `required_outputs`, contract/baseline references, and an optional finite `baseline_score`. Repository-local branch existence and exact `refs/heads/...` identity remain launcher/integration checks for C11 because C7 projection has no repository argument. It never includes raw gate/final paths, split manifests, hidden seeds, credentials, tokens, or `eval_cmd_test`; C10 owns gate capability plumbing.
 
 The flat mapping is an audit view. Injection uses four detached views because Arbor has separate ownership seams:
 
