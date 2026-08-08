@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "id": "node.root",
+  "parent_id": null,
+  "children_ids": [],
+  "depth": 0,
+  "status": "pending",
+  "score": null,
+  "lifecycle": "pending",
+  "admissibility": "unevaluated",
+  "hypothesis": {
+    "mechanism": "Short-horizon reversal follows temporary liquidity pressure.",
+    "falsifiable_prediction": "A lagged return reversal signal improves net development score.",
+    "observable": "Net development score after the frozen cost model.",
+    "single_change": "Add one lagged cross-sectional reversal feature.",
+    "conflicts": []
+  },
+  "scope": {
+    "market": "synthetic-equities",
+    "universe": "liquid-large-cap",
+    "frequency": "daily",
+    "horizon": "one-day",
+    "time_range": "2020-01-01/2020-12-31",
+    "fields": ["close", "volume"],
+    "regime_labels": ["all"],
+    "data_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "cost_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "family": {
+    "family_id": "family.root",
+    "parent_family_id": null,
+    "proposal_order": 1,
+    "canonical_status": "unique",
+    "canonical_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "similarity_refs": []
+  },
+  "candidate_id": null,
+  "candidate_artifact": null,
+  "attempt_ids": [],
+  "evidence_refs": [],
+  "test_family_refs": [],
+  "lineage_refs": [],
+  "insights": [],
+  "failure": {
+    "failure_type": "none",
+    "summary": "",
+    "evidence_ids": []
+  },
+  "code_ref": null,
+  "prompt_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "created_event_id": "event.1",
+  "last_event_id": "event.1"
+}

@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "meta": {
+    "baseline_score": 0.1,
+    "trunk_score": 0.14,
+    "test_baseline_score": 0.08,
+    "test_trunk_score": 0.12,
+    "metric_direction": "maximize",
+    "eval_timeout": 90,
+    "eval_retries": 2,
+    "eval_cmd": "python evaluator.py --token SYNTHETIC_SECRET",
+    "eval_cmd_test": "python hidden_evaluator.py",
+    "dataset_info": "private rows at /srv/hidden/final.csv",
+    "submission_path": "/srv/private/submission.csv",
+    "sample_submission_path": "../hidden/sample.csv",
+    "plugin_payload": {"api_token": "SYNTHETIC_SECRET"}
+  },
+  "root_id": "ROOT",
+  "max_depth": 3,
+  "nodes": {
+    "ROOT": {
+      "id": "ROOT",
+      "parent_id": null,
+      "children_ids": ["1", "2"],
+      "depth": 0,
+      "hypothesis": "Baseline <script>alert('root')</script>",
+      "status": "done",
+      "result": "Legacy baseline only",
+      "score": 0.1,
+      "score_split": "dev",
+      "insight": "Keep <b>costs</b> visible",
+      "code_ref": "refs/heads/main",
+      "eval_status": "scored"
+    },
+    "1": {
+      "id": "1",
+      "parent_id": "ROOT",
+      "children_ids": [],
+      "depth": 1,
+      "hypothesis": "Try robust reversal </script><script>alert(1)</script>",
+      "status": "merged",
+      "insight": "Tail clipping helped & needs confirmation",
+      "result": "Legacy development improvement",
+      "score": 0.16,
+      "test_score": 0.13,
+      "code_ref": "refs/heads/idea-1",
+      "related_work": "<img src=x onerror=alert(1)>",
+      "grounding": "citation <unsafe>",
+      "eval_status": "scored",
+      "stop_reason": "finished",
+      "attempt": 2
+    },
+    "2": {
+      "id": "2",
+      "parent_id": "ROOT",
+      "children_ids": [],
+      "depth": 1,
+      "hypothesis": "Old serializer score delta",
+      "status": "done",
+      "result": "Pre-v3 score field",
+      "score_delta": -0.02,
+      "eval_status": "scored"
+    }
+  }
+}

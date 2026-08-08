@@ -1,0 +1,167 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run.qualification",
+  "revision": 1,
+  "contract_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "root_node_id": "node.root",
+  "run_state": "development",
+  "ledger_head": {
+    "last_sequence": 2,
+    "last_event_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "nodes": [
+    {
+      "schema_version": "1.0",
+      "id": "node.root",
+      "parent_id": null,
+      "children_ids": ["node.child"],
+      "depth": 0,
+      "status": "pending",
+      "score": null,
+      "lifecycle": "pending",
+      "admissibility": "unevaluated",
+      "hypothesis": {
+        "mechanism": "Short-horizon reversal follows temporary liquidity pressure.",
+        "falsifiable_prediction": "A lagged return reversal signal improves net development score.",
+        "observable": "Net development score after the frozen cost model.",
+        "single_change": "Add one lagged cross-sectional reversal feature.",
+        "conflicts": []
+      },
+      "scope": {
+        "market": "synthetic-equities",
+        "universe": "liquid-large-cap",
+        "frequency": "daily",
+        "horizon": "one-day",
+        "time_range": "2020-01-01/2020-12-31",
+        "fields": ["close", "volume"],
+        "regime_labels": ["all"],
+        "data_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cost_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "family": {
+        "family_id": "family.root",
+        "parent_family_id": null,
+        "proposal_order": 1,
+        "canonical_status": "unique",
+        "canonical_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "similarity_refs": []
+      },
+      "candidate_id": null,
+      "candidate_artifact": null,
+      "attempt_ids": [],
+      "evidence_refs": [],
+      "test_family_refs": [],
+      "lineage_refs": [],
+      "insights": [],
+      "failure": {
+        "failure_type": "none",
+        "summary": "",
+        "evidence_ids": []
+      },
+      "code_ref": null,
+      "prompt_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "created_event_id": "event.1",
+      "last_event_id": "event.2"
+    },
+    {
+      "schema_version": "1.0",
+      "id": "node.child",
+      "parent_id": "node.root",
+      "children_ids": [],
+      "depth": 1,
+      "status": "done",
+      "score": 0.125,
+      "lifecycle": "done",
+      "admissibility": "admissible",
+      "hypothesis": {
+        "mechanism": "Liquidity shocks mean-revert over one daily bar.",
+        "falsifiable_prediction": "The isolated reversal feature increases net score by at least 0.01.",
+        "observable": "Frozen development result for candidate.child.1.",
+        "single_change": "Winsorize and negate the lag-one return rank.",
+        "conflicts": ["momentum continuation"]
+      },
+      "scope": {
+        "market": "synthetic-equities",
+        "universe": "liquid-large-cap",
+        "frequency": "daily",
+        "horizon": "one-day",
+        "time_range": "2020-01-01/2020-12-31",
+        "fields": ["close", "volume"],
+        "regime_labels": ["all"],
+        "data_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cost_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "family": {
+        "family_id": "family.reversal",
+        "parent_family_id": "family.root",
+        "proposal_order": 2,
+        "canonical_status": "unique",
+        "canonical_hash": "1212121212121212121212121212121212121212121212121212121212121212",
+        "similarity_refs": []
+      },
+      "candidate_id": "candidate.child.1",
+      "candidate_artifact": {
+        "artifact_id": "artifact.candidate.child.1",
+        "kind": "candidate",
+        "relative_path": "candidates/child.py",
+        "sha256": "3434343434343434343434343434343434343434343434343434343434343434",
+        "media_type": "text/x-python",
+        "produced_by_event_id": "event.2"
+      },
+      "attempt_ids": ["attempt.child.1"],
+      "evidence_refs": [
+        {
+          "evidence_id": "evidence.child.1",
+          "attempt_id": "attempt.child.1",
+          "result_id": "result.child.1",
+          "split_role": "development",
+          "level": "observed",
+          "claim": "The frozen development result has net score 0.125.",
+          "conditions": ["frozen data snapshot", "frozen cost model"],
+          "status": "valid",
+          "artifact_refs": []
+        }
+      ],
+      "test_family_refs": ["test-family.reversal.1"],
+      "lineage_refs": ["node.root"],
+      "insights": [
+        {
+          "insight_id": "insight.child.1",
+          "text": "Winsorization limits reversal-tail instability.",
+          "scope": {
+            "market": "synthetic-equities",
+            "universe": "liquid-large-cap",
+            "frequency": "daily",
+            "horizon": "one-day",
+            "time_range": "2020-01-01/2020-12-31",
+            "fields": ["close", "volume"],
+            "regime_labels": ["all"],
+            "data_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cost_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "evidence_ids": ["evidence.child.1"],
+          "grade": "development_supported",
+          "validity": "active",
+          "invalidation_reason": null
+        }
+      ],
+      "failure": {
+        "failure_type": "none",
+        "summary": "",
+        "evidence_ids": []
+      },
+      "code_ref": "refs/heads/candidate-child-1",
+      "prompt_snapshot_sha256": "5656565656565656565656565656565656565656565656565656565656565656",
+      "created_event_id": "event.2",
+      "last_event_id": "event.2"
+    }
+  ],
+  "counts": {
+    "proposals": 1,
+    "unique_candidates": 1,
+    "candidate_families": 1,
+    "attempts": 1,
+    "evaluation_queries": 1,
+    "admissible_evidence": 1
+  }
+}
