@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from q_arbor.hypotheses import (
-    TreePersistenceError,
     QHypothesisTree,
+    TreePersistenceError,
     export_tree_json,
     import_arbor_tree,
     render_tree_html,
