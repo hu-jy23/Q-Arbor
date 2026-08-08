@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0.dev0"
 description = "A partial prototype of an auditable quantitative research harness built on Arbor"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{name = "Q-Arbor research project"}]
 dependencies = [
   "jsonschema[format]>=4.23,<5",
@@ -32,4 +33,3 @@ q_arbor = ["py.typed", "spec/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-
