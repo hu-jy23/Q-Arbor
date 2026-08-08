@@ -117,7 +117,7 @@ For every accepted mutation:
 5. apply the deterministic reducer;
 6. atomically replace and directory-sync the tree snapshot.
 
-The C8 event subset is `run.started`, `hypothesis.proposed`, `node.updated`, `insight.created`, and `prune.completed`. Event payloads contain a versioned mutation kind, idempotency key, request hash, expected/result revision, and the complete changed node records needed for replay. The initial event produces revision zero; thereafter `ledger_sequence = tree_revision + 1`.
+The C8 event subset is `run.started`, `hypothesis.proposed`, `node.updated`, `insight.created`, and `prune.completed`. Event payloads contain a versioned mutation kind, idempotency key, request hash, expected/result revision, and the complete changed node records needed for replay. Because `HypothesisTreeStore.create` receives an already frozen contract hash, its initial event produces revision zero in `development` state; thereafter `ledger_sequence = tree_revision + 1`.
 
 Recovery treats the verified journal as history and `tree.json` as a materialized view. A missing or event-behind snapshot is rebuilt. A broken event hash/sequence, conflicting idempotency record, snapshot-ahead state, or unrecoverable partial event fails with `TreeIntegrityError`; it is never silently accepted. Tests inject a failure after event `fsync` and before snapshot replacement, then require exact recovery and idempotent retry.
 
