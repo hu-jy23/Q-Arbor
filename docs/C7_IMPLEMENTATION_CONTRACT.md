@@ -29,9 +29,17 @@ This document fixes the public seams used by the parallel C7 lanes.
 
 `q_arbor.integrations` must export `ArborRunProjection` and `project_to_arbor(contract, *, contract_path, trunk_branch, baseline_score=None)`.
 
-The projection exposes a new mapping on every call. It includes development `eval_cmd`, `metric_direction`, `trunk_branch`, `protected_paths`, `required_outputs`, contract/baseline references, and optional verified `baseline_score`. It never includes raw gate/final paths, split manifests, hidden seeds, credentials, tokens, or `eval_cmd_test`; C10 owns gate capability plumbing.
+The projection exposes a new mapping on every call. It includes development `eval_cmd`, `metric_direction`, `trunk_branch`, `protected_paths`, `required_outputs`, contract/baseline references, and optional finite `baseline_score`. Its persisted `contract_path` must load as the same contract hash. It never includes raw gate/final paths, split manifests, hidden seeds, credentials, tokens, or `eval_cmd_test`; C10 owns gate capability plumbing.
+
+The flat mapping is an audit view. Injection uses four detached views because Arbor has separate ownership seams:
+
+- `tree_meta()` → `TreeSetMeta`: development `eval_cmd`, direction, optional baseline;
+- `config_overrides()` → `CoordinatorConfig`: independent trunk and protected paths;
+- `plugin_overrides()` → Arbor plugin/merge guard: protected paths and required outputs;
+- `audit_metadata()` → Q-Arbor's external session artifact: contract identity and projection version.
+
+The emitted `q_arbor.evaluation` command is a C9 forward interface. C7 freezes and quotes the template but does not execute or claim an evaluator implementation.
 
 ## Test boundary
 
 Synthetic fixtures must cover valid round-trip/hash stability plus missing field, duplicate key, non-finite value, Unicode equivalence, invalid hash, time overlap, unsafe/overlapping path, bad role capability, incomplete final split, secret-like field, projection quoting, and projection non-leakage.
-

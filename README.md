@@ -24,3 +24,12 @@ python -m venv .venv
 
 The canonical design schema is packaged at `q_arbor/spec/C6_INTERFACE_SCHEMA.json`; its expected SHA-256 is recorded in `q_arbor/spec/MANIFEST.json`.
 
+Basic contract operations:
+
+```bash
+q-arbor-contract freeze tests/fixtures/contracts/valid_contract.json --output frozen.json
+q-arbor-contract validate frozen.json
+q-arbor-contract show-hash frozen.json
+```
+
+`project_to_arbor(...)` returns separate `tree_meta()`, `config_overrides()`, `plugin_overrides()`, and `audit_metadata()` views. Its development evaluation command is a forward contract for C9 and is intentionally not executable in C7.
