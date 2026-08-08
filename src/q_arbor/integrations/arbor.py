@@ -285,6 +285,13 @@ def _branch_name(value: object) -> str:
         raise ValueError("trunk_branch is not a safe branch name")
     if value.casefold() in {"head", "main", "master"}:
         raise ValueError("trunk_branch must be an independent non-default branch")
+    if value == "@" or value.split("/", 1)[0].casefold() in {
+        "heads",
+        "refs",
+        "remotes",
+        "tags",
+    }:
+        raise ValueError("trunk_branch must be an unambiguous short branch name")
     if (
         value.startswith(("-", "/", "."))
         or value.endswith(("/", "."))
@@ -305,7 +312,10 @@ def _baseline_score(value: Real | None) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError("baseline_score must be a real number")
-    projected = float(value)
+    try:
+        projected = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("baseline_score must be finite") from exc
     if not math.isfinite(projected):
         raise ValueError("baseline_score must be finite")
     return projected

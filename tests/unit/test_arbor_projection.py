@@ -4,6 +4,7 @@ import copy
 import json
 import shlex
 from dataclasses import FrozenInstanceError, dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +209,12 @@ def test_projection_is_immutable(
         "bad name",
         "bad?name",
         "x.lock",
+        "@",
+        "refs/heads/main",
+        "refs/remotes/origin/main",
+        "heads/main",
+        "tags/release",
+        "remotes/origin/trunk",
     ],
 )
 def test_invalid_trunk_branch_fails_closed(
@@ -222,6 +229,27 @@ def test_non_finite_baseline_fails_closed(
     contract: QuantResearchContract, contract_path: Path, score: float
 ) -> None:
     with pytest.raises(ValueError):
+        project_to_arbor(
+            contract,
+            contract_path=contract_path,
+            trunk_branch="q-arbor/trunk",
+            baseline_score=score,
+        )
+
+
+@pytest.mark.parametrize(
+    "score",
+    [
+        pytest.param(10**10000, id="huge-integer"),
+        pytest.param(Fraction(10**10000, 1), id="huge-fraction"),
+    ],
+)
+def test_overflowing_baseline_has_stable_finite_error(
+    contract: QuantResearchContract,
+    contract_path: Path,
+    score: int | Fraction,
+) -> None:
+    with pytest.raises(ValueError, match="^baseline_score must be finite$"):
         project_to_arbor(
             contract,
             contract_path=contract_path,
