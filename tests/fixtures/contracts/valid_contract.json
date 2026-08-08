@@ -1,0 +1,170 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "synthetic.contract.v1",
+  "task_id": "synthetic.factor.001",
+  "task_kind": "synthetic_factor",
+  "objective": {
+    "research_question": "Can a Café-themed synthetic factor survive fixed costs?",
+    "baseline_ref": "baseline/main@0123456789abcdef",
+    "candidate_artifact_type": "python_strategy"
+  },
+  "plugin": {
+    "name": "synthetic_factor",
+    "version": "1.0.0",
+    "code_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "artifact_type": "python_strategy"
+  },
+  "editable_surface": [
+    "strategies/**"
+  ],
+  "protected_paths": [
+    "contracts/**",
+    "data/**",
+    "evaluator/**"
+  ],
+  "required_outputs": [
+    "strategies/candidate.json"
+  ],
+  "data": {
+    "snapshot_id": "synthetic.snapshot.001",
+    "snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "source_version": "synthetic-v1",
+    "point_in_time": {
+      "enabled": true,
+      "asof_rule": "observations are visible after the fixed one-day lag",
+      "availability_lag": "P1D",
+      "universe_rule": "membership is frozen at each observation time",
+      "adjustment_rule": "split-adjusted prices use only then-known actions",
+      "label_horizon": "P5D",
+      "known_limitations": [
+        "synthetic fixture only"
+      ]
+    },
+    "splits": {
+      "development": {
+        "dataset_id": "synthetic.development.v1",
+        "manifest_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "role": "development",
+        "query_budget": 20,
+        "sealed": false,
+        "time_range": {
+          "start": "2020-01-01T00:00:00Z",
+          "end": "2020-12-31T23:59:59Z"
+        }
+      },
+      "gate": {
+        "dataset_id": "synthetic.gate.v1",
+        "manifest_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "role": "gate",
+        "query_budget": 3,
+        "sealed": true,
+        "time_range": {
+          "start": "2021-01-01T00:00:00Z",
+          "end": "2021-12-31T23:59:59Z"
+        }
+      },
+      "final": {
+        "dataset_id": "synthetic.final.v1",
+        "manifest_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "role": "final",
+        "query_budget": 1,
+        "sealed": true,
+        "time_range": {
+          "start": "2022-01-01T00:00:00Z",
+          "end": "2022-12-31T23:59:59Z"
+        }
+      }
+    }
+  },
+  "metrics": {
+    "primary": {
+      "name": "net_sharpe",
+      "direction": "maximize",
+      "unit": "ratio",
+      "aggregation": "median_across_folds"
+    },
+    "hard_constraints": [
+      {
+        "name": "max_drawdown",
+        "operator": "le",
+        "threshold": 0.2,
+        "unit": "fraction"
+      }
+    ],
+    "diagnostics": [
+      {
+        "name": "turnover",
+        "direction": "minimize",
+        "unit": "fraction_per_day",
+        "aggregation": "mean_across_folds"
+      }
+    ],
+    "admission_rule": "primary improves and every hard constraint passes"
+  },
+  "cost_model": {
+    "model_id": "synthetic.costs.v1",
+    "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "components": [
+      {
+        "name": "transaction_cost",
+        "rule": "one basis point per unit turnover"
+      },
+      {
+        "name": "slippage",
+        "rule": "two basis points per trade"
+      }
+    ],
+    "currency": "USD",
+    "execution_delay": "P1D"
+  },
+  "budgets": {
+    "max_nodes": 12,
+    "max_executor_runs": 8,
+    "max_dev_queries": 20,
+    "max_gate_queries": 3,
+    "max_final_queries": 1,
+    "max_tokens": 100000,
+    "max_wall_seconds": 3600
+  },
+  "capabilities": {
+    "executor_roles": [
+      "development"
+    ],
+    "coordinator_roles": [
+      "development",
+      "gate"
+    ],
+    "finalizer_roles": [
+      "final"
+    ],
+    "network_policy": "deny"
+  },
+  "model_provenance": {
+    "provider": "synthetic-provider",
+    "model": "synthetic-model",
+    "version": "1.0",
+    "knowledge_cutoff_status": "known",
+    "knowledge_cutoff": "2019-12-31",
+    "contamination_risk": "low"
+  },
+  "statistical_plan": [
+    {
+      "method": "psr",
+      "control_object": "selection_bias",
+      "claim_ceiling": "diagnostic",
+      "family_unit": "candidate",
+      "duplicate_policy": "count_each_query",
+      "confirmation_design": "development_diagnostic",
+      "assumption_schema_id": "q-arbor.stats.psr.v1",
+      "required_assumptions": [
+        "finite return moments",
+        "fixed observation frequency"
+      ]
+    }
+  ],
+  "seeds": [
+    7,
+    19
+  ]
+}
