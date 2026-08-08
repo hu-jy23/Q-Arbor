@@ -60,6 +60,8 @@ write_tree_html(tree, path, *, title="Q-Arbor Hypothesis Tree") -> None
 
 `clock` is a zero-argument callable returning a timezone-aware `datetime`; `event_id_factory` receives the next integer sequence and returns a valid identifier. `fault_hook(stage)` is called at the documented `"after_event_fsync"` seam. Default factories may vary between runs; injected factories make qualification tests deterministic.
 
+Error ownership is fixed: malformed/ambiguous input uses `HypothesisDecodeError`; frozen-schema failure uses `HypothesisSchemaError`; schema-valid node/tree cross-invariant failure uses `HypothesisInvariantError`; a wrong `tree_hash`, journal/snapshot chain failure, or snapshot-ahead state uses `TreeIntegrityError`; stale revision, different-request idempotency reuse, scope/sibling/non-active propagation rejection, or immutable-field mutation uses `TreeConflictError`; propagation from compatibility-quarantined state uses `TreeCompatibilityError`; and filesystem/lock/atomic-write failure uses `TreePersistenceError`.
+
 All C8 artifacts validate through the packaged, hash-checked C6 discriminator schema. Canonical JSON is NFC-normalized, sorted, compact UTF-8 with non-finite numbers and ambiguous/recursive values rejected. `tree_hash` hashes the complete normalized tree payload after omitting only its top-level `tree_hash` field.
 
 ## Node semantics
