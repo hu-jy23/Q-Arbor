@@ -1002,8 +1002,8 @@ def _fail(message: str, *, cause: BaseException | None = None) -> None:
 
 
 __all__ = [
-    "ArborImportResult",
     "LEGACY_UNKNOWN_HASH",
     "LEGACY_UNKNOWN_TEXT",
+    "ArborImportResult",
     "import_arbor_tree",
 ]
