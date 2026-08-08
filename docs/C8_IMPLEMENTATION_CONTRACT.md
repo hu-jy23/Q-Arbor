@@ -12,6 +12,54 @@ This contract is the coordination surface for C8. It implements only the C6 `Qua
 - `TreeMutation`, mutation builders, a pure reducer, scope-aware insight propagation, and `HypothesisTreeStore`;
 - `import_arbor_tree`, deterministic JSON export, and a self-contained escaped HTML export.
 
+The exact C8 public names are frozen here:
+
+```python
+class HypothesisError(Exception): ...
+class HypothesisDecodeError(HypothesisError): ...
+class HypothesisSchemaError(HypothesisError): ...
+class HypothesisInvariantError(HypothesisError): ...
+class TreeConflictError(HypothesisError): ...
+class TreeIntegrityError(HypothesisError): ...
+class TreeCompatibilityError(HypothesisError): ...
+class TreePersistenceError(HypothesisError): ...
+
+freeze_node(mapping) -> QuantHypothesisNode
+validate_node(mapping) -> QuantHypothesisNode
+freeze_tree(mapping) -> QHypothesisTree             # replaces tree_hash
+validate_tree(mapping, *, verify_hash=True) -> QHypothesisTree
+load_tree(path) -> QHypothesisTree
+
+TreeMutation.add_node(draft: NodeDraft) -> TreeMutation
+TreeMutation.update_node(node_id, updates) -> TreeMutation
+TreeMutation.prune_subtree(node_id, reason) -> TreeMutation
+TreeMutation.propagate_insight(source_node_id, target_node_id, insight_id) -> TreeMutation
+apply_tree_event(tree, ledger_event) -> QHypothesisTree
+
+HypothesisTreeStore.create(
+    directory, *, run_id, contract_hash, root: NodeDraft,
+    clock=None, event_id_factory=None, fault_hook=None,
+) -> HypothesisTreeStore
+HypothesisTreeStore.open(
+    directory, *, clock=None, event_id_factory=None, fault_hook=None,
+) -> HypothesisTreeStore
+store.load() -> QHypothesisTree
+store.apply(mutation, *, expected_revision, idempotency_key,
+            actor="coordinator") -> QHypothesisTree
+store.recover() -> QHypothesisTree
+store.verify() -> TreeVerification
+
+import_arbor_tree(legacy_mapping, *, run_id, contract_hash,
+                  default_scope=None) -> ArborImportResult
+export_tree_json(tree) -> str
+render_tree_html(tree, *, title="Q-Arbor Hypothesis Tree") -> str
+write_tree_html(tree, path, *, title="Q-Arbor Hypothesis Tree") -> None
+```
+
+`NodeDraft` is immutable and contains `id`, `parent_id`, `hypothesis`, `scope`, `family`, and `prompt_snapshot_sha256`, plus optional candidate/artifact, test-family, lineage, and code references. Store/reducer code supplies depth, empty runtime collections, initial composite status, failure=`none`, and creation/last event IDs. `TreeMutation.to_dict()` is `{"schema_version":"1.0","kind":...,"payload":...}` and its `sha256` hashes that complete normalized mapping. Module-level builder aliases may exist, but tests use the class methods above.
+
+`clock` is a zero-argument callable returning a timezone-aware `datetime`; `event_id_factory` receives the next integer sequence and returns a valid identifier. `fault_hook(stage)` is called at the documented `"after_event_fsync"` seam. Default factories may vary between runs; injected factories make qualification tests deterministic.
+
 All C8 artifacts validate through the packaged, hash-checked C6 discriminator schema. Canonical JSON is NFC-normalized, sorted, compact UTF-8 with non-finite numbers and ambiguous/recursive values rejected. `tree_hash` hashes the complete normalized tree payload after omitting only its top-level `tree_hash` field.
 
 ## Node semantics
@@ -45,6 +93,8 @@ A complete node answers: why it exists (`mechanism` and prediction), what change
 - The tree's contract hash, ledger head, revision, and tree hash are mutually consistent.
 - A legacy/missing-field compatibility flag quarantines incomplete state from admissible scoring or propagation.
 
+Counts have one C8 definition: `proposals` is the number of non-root nodes; `unique_candidates` and `candidate_families` are distinct non-null candidate/family IDs on non-root nodes; `attempts` is the number of distinct attempt IDs; `evaluation_queries` is the number of distinct non-null `result_id` references (a referenced-result projection until C10 replaces it with the authoritative ledger count); and `admissible_evidence` is the number of distinct evidence IDs whose status is `valid` on an admissible node.
+
 ## Scope-aware propagation
 
 Propagation is upward from a source node to one of its ancestors. The copied `InsightRecord` retains its original scope and evidence IDs; the target also receives the referenced evidence records, without rewriting their claims or grades. Propagation requires matching market, universe, frequency, horizon, data snapshot hash, and cost-model hash. Time range, fields, and regime labels remain attached to the original insight scope and are never silently generalized.
@@ -76,6 +126,8 @@ The importer accepts the pinned Arbor v3 `idea_tree.json` shape (`root_id`, node
 - unbound legacy scores and test scores are quarantined in tree compatibility metadata, while Q-node `score` remains null and cannot drive selection;
 - legacy status/result/insight/code references are retained only in safe typed projections; raw eval commands, dataset descriptions, paths, tokens, and plugin payloads are dropped and listed;
 - callers supply the destination run ID and contract hash; absent scope hashes use documented zero-hash sentinels and keep the node quarantined until resolved.
+
+Compatibility uses `LEGACY_UNKNOWN_HASH = "0" * 64` and `LEGACY_UNKNOWN_TEXT = "legacy:unspecified"`. `ArborImportResult` contains the immutable tree, a tuple of deterministic import `LedgerEvent` mappings, and warnings. Tree compatibility metadata uses exactly `source`, `source_version`, `quarantined`, `missing_fields_by_node`, `legacy_scores_by_node`, `legacy_status_by_node`, `safe_meta`, and `dropped_meta_keys`. Import event IDs/hashes are derived from canonical legacy input and sequence; absent source time uses the fixed sentinel `1970-01-01T00:00:00Z` and is reported as missing, so identical inputs produce identical output.
 
 JSON export is canonical. HTML export is deterministic, self-contained, UTF-8, and escapes every untrusted string and embedded JSON delimiter. It shows tree structure, status/admissibility, hypothesis, scope, evidence grade, failure, insights, and compatibility warnings.
 
