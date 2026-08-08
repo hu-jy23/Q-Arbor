@@ -25,6 +25,18 @@ This document fixes the public seams used by the parallel C7 lanes.
 5. Canonicalize with sorted keys, compact separators, UTF-8, and `allow_nan=False`; omit `contract_hash` when computing its digest.
 6. Deep-freeze the normalized snapshot.
 
+Excessive JSON nesting fails as `ContractDecodeError` at decode, normalization, or canonicalization boundaries. Runtime `fullmatch` checks close terminal-newline behavior in every QuantResearchContract identifier and SHA-256 field. Contract paths are bounded to 4095 UTF-8 bytes in total and 255 UTF-8 bytes per component so accepted values remain representable at the pinned Git/filesystem seam.
+
+## Data-locator and path boundary
+
+The frozen C6 bytes and hash remain unchanged. `ConstraintSpec.threshold` is the only schema-open value inside `QuantResearchContract`; C7 gives it a closed runtime meaning: comparison operators accept a JSON scalar, and `in` accepts a non-empty array of JSON scalars. Filesystem and URI locator strings fail validation in either form. Narrative fields retain their schema-defined free-text semantics and are not scanned as locators.
+
+C7 assumes trusted contract intake for narrative and statistical scalar values. Its structural checks are not a general-purpose secret or entropy detector. C10 remains responsible for capability enforcement and prompt/artifact redaction; raw credentials and restricted data remain forbidden by the repository contract.
+
+Split content is bound by each sanctioned `manifest_sha256`, and the three role manifests are pairwise distinct. Data `snapshot_id`, split `dataset_id` values, and `source_version` are opaque provenance labels and cannot encode filesystem or URI locations. A shared source dataset may therefore retain one `dataset_id`; distinct manifest hashes establish development/gate/final identity. C10 owns raw split locator resolution and access capabilities.
+
+`editable_surface` and `protected_paths` retain Arbor-compatible full-path `fnmatch` globs. Every `required_outputs` entry is a literal Git path covered by at least one editable pattern. This matches Arbor's two merge seams, which check output existence with `git show branch:path`; it also prevents a pre-existing uneditable file from satisfying the merge guard. These runtime checks enforce C6 C01 and J03 before projection.
+
 ## Arbor projection API
 
 `q_arbor.integrations` must export `ArborRunProjection` and `project_to_arbor(contract, *, contract_path, trunk_branch, baseline_score=None)`.
@@ -42,4 +54,4 @@ The emitted `q_arbor.evaluation` command is a C9 forward interface. C7 freezes a
 
 ## Test boundary
 
-Synthetic fixtures must cover valid round-trip/hash stability plus missing field, duplicate key, non-finite value, Unicode equivalence, invalid hash, time overlap, unsafe/overlapping path, bad role capability, incomplete final split, secret-like field, projection quoting, and projection non-leakage.
+Synthetic fixtures must cover valid round-trip/hash stability plus missing field, duplicate key, non-finite value, excessive nesting, Unicode equivalence, invalid hash, time overlap and overflow, unsafe/oversized/overlapping path, literal and editable required outputs, opaque split identities, distinct split manifests, threshold locator smuggling, bad role capability, incomplete final split, secret-like field, projection quoting, and projection non-leakage.

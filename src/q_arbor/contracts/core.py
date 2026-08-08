@@ -11,7 +11,7 @@ import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
-from functools import cache, lru_cache
+from functools import lru_cache
 from hashlib import sha256
 from importlib import resources
 from itertools import pairwise
@@ -49,6 +49,20 @@ _EXPECTED_SPLITS: Final = {
 _DATE_RE: Final = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATETIME_RE: Final = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+_IDENTIFIER_FULL_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
+_SHA256_FULL_RE: Final = re.compile(r"[a-f0-9]{64}")
+_WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:")
+_URI_RE: Final = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_LOCATOR_SCHEME_RE: Final = re.compile(
+    r"^(?:abfs|data|dbfs|file|ftp|gs|hdfs|https?|mongodb|mysql|postgresql|s3|"
+    r"sftp|sqlite|ssh):",
+    re.IGNORECASE,
+)
+_DATA_FILE_SUFFIX_RE: Final = re.compile(
+    r"\.(?:arrow|bin|csv|db|feather|h5|hdf5|json|jsonl|npy|npz|parquet|pickle|"
+    r"pkl|sqlite|tsv|txt|ya?ml)(?:[?#].*)?$",
+    re.IGNORECASE,
 )
 _GLOB_META: Final = frozenset("*?[")
 _SECRET_PARTS: Final = frozenset(
@@ -94,7 +108,7 @@ def _decode_json_bytes(raw: bytes) -> Any:
         )
     except ContractDecodeError:
         raise
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, RecursionError, ValueError) as exc:
         line = getattr(exc, "lineno", None)
         column = getattr(exc, "colno", None)
         location = f" at line {line}, column {column}" if line and column else ""
@@ -160,7 +174,12 @@ def _normalize_json(value: Any, active: set[int]) -> JSONValue:
 def _normalize_mapping(mapping: Mapping[str, Any]) -> dict[str, JSONValue]:
     if not isinstance(mapping, Mapping):
         raise ContractDecodeError("contract must be a JSON object")
-    normalized = _normalize_json(mapping, set())
+    try:
+        normalized = _normalize_json(mapping, set())
+    except ContractDecodeError:
+        raise
+    except RecursionError as exc:
+        raise ContractDecodeError("contract JSON nesting is too deep") from exc
     if not isinstance(
         normalized, dict
     ):  # Kept explicit for type-checkers and custom mappings.
@@ -177,7 +196,7 @@ def _canonical_normalized_bytes(mapping: Mapping[str, Any]) -> bytes:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+    except (RecursionError, TypeError, ValueError, UnicodeEncodeError) as exc:
         raise ContractDecodeError(
             "contract cannot be encoded as canonical JSON"
         ) from exc
@@ -271,7 +290,7 @@ def _parse_boundary(value: str, path: str) -> tuple[str, date | datetime]:
             if parsed.tzinfo is None or parsed.utcoffset() is None:
                 raise ValueError
             return "datetime", parsed.astimezone(UTC)
-    except ValueError as exc:
+    except (OverflowError, ValueError) as exc:
         raise ContractInvariantError(f"{path} is not a valid time boundary") from exc
     raise ContractInvariantError(
         f"{path} must be an ISO date or timezone-aware datetime"
@@ -320,7 +339,44 @@ def _validate_time_invariants(contract: Mapping[str, JSONValue]) -> None:
             )
 
 
-def _validate_path_syntax(path: str, field: str) -> list[str]:
+def _validate_lexical_invariants(contract: Mapping[str, JSONValue]) -> None:
+    plugin = cast(dict[str, str], contract["plugin"])
+    data = cast(dict[str, Any], contract["data"])
+    splits = cast(dict[str, dict[str, str]], data["splits"])
+    cost_model = cast(dict[str, Any], contract["cost_model"])
+
+    identifiers = [
+        ("contract_id", contract["contract_id"]),
+        ("task_id", contract["task_id"]),
+        ("plugin.name", plugin["name"]),
+        ("data.snapshot_id", data["snapshot_id"]),
+        ("cost_model.model_id", cost_model["model_id"]),
+        *(
+            (f"data.splits.{name}.dataset_id", splits[name]["dataset_id"])
+            for name in _SPLIT_ORDER
+        ),
+    ]
+    for field, value in identifiers:
+        if not isinstance(value, str) or _IDENTIFIER_FULL_RE.fullmatch(value) is None:
+            raise ContractInvariantError(f"{field} is not a strict identifier")
+
+    hashes = [
+        ("contract_hash", contract["contract_hash"]),
+        ("plugin.code_sha256", plugin["code_sha256"]),
+        ("data.snapshot_sha256", data["snapshot_sha256"]),
+        ("data.schema_sha256", data["schema_sha256"]),
+        ("cost_model.sha256", cost_model["sha256"]),
+        *(
+            (f"data.splits.{name}.manifest_sha256", splits[name]["manifest_sha256"])
+            for name in _SPLIT_ORDER
+        ),
+    ]
+    for field, value in hashes:
+        if not isinstance(value, str) or _SHA256_FULL_RE.fullmatch(value) is None:
+            raise ContractInvariantError(f"{field} is not a strict SHA-256 digest")
+
+
+def _validate_path_syntax(path: str, field: str) -> str:
     if path != path.strip() or path.endswith("/"):
         raise ContractInvariantError(f"{field} contains a non-canonical path")
     if any(ord(character) < 32 or ord(character) == 127 for character in path):
@@ -328,9 +384,13 @@ def _validate_path_syntax(path: str, field: str) -> list[str]:
     if path.startswith("~") or "://" in path:
         raise ContractInvariantError(f"{field} contains an unsafe path")
     segments = path.split("/")
+    if len(path.encode("utf-8")) > 4095:
+        raise ContractInvariantError(f"{field} exceeds the repository path byte limit")
+    if any(len(segment.encode("utf-8")) > 255 for segment in segments):
+        raise ContractInvariantError(f"{field} contains an oversized path component")
     if any("**" in segment and segment != "**" for segment in segments):
         raise ContractInvariantError(f"{field} contains an ambiguous recursive glob")
-    return segments
+    return path
 
 
 def _fixed_prefix(pattern: str) -> str:
@@ -368,40 +428,20 @@ def _segment_patterns_overlap(left: str, right: str) -> bool:
     if not left_glob and not right_glob:
         return left == right
     if not left_glob:
-        return fnmatch.fnmatchcase(left, right)
+        return fnmatch.fnmatch(left, right)
     if not right_glob:
-        return fnmatch.fnmatchcase(right, left)
+        return fnmatch.fnmatch(right, left)
     if not _literal_prefixes_compatible(_fixed_prefix(left), _fixed_prefix(right)):
         return False
     # Remaining wildcard-language intersections are conservatively considered possible.
     return _literal_suffixes_compatible(_fixed_suffix(left), _fixed_suffix(right))
 
 
-def _glob_patterns_overlap(left: list[str], right: list[str]) -> bool:
-    @cache
-    def visit(left_index: int, right_index: int) -> bool:
-        if left_index == len(left) and right_index == len(right):
-            return True
-        if left_index == len(left):
-            return all(segment == "**" for segment in right[right_index:])
-        if right_index == len(right):
-            return all(segment == "**" for segment in left[left_index:])
-
-        left_segment = left[left_index]
-        right_segment = right[right_index]
-        if left_segment == "**":
-            if visit(left_index + 1, right_index):
-                return True
-            return visit(left_index, right_index + 1)
-        if right_segment == "**":
-            if visit(left_index, right_index + 1):
-                return True
-            return visit(left_index + 1, right_index)
-        return _segment_patterns_overlap(left_segment, right_segment) and visit(
-            left_index + 1, right_index + 1
-        )
-
-    return visit(0, 0)
+def _glob_patterns_overlap(left: str, right: str) -> bool:
+    # Arbor applies fnmatch to the complete repository-relative path, where '*'
+    # can consume '/'.  Prefix/suffix compatibility is a conservative language-
+    # intersection check for the same seam (C6 C01/J03).
+    return _segment_patterns_overlap(os.path.normcase(left), os.path.normcase(right))
 
 
 def _validate_path_invariants(contract: Mapping[str, JSONValue]) -> None:
@@ -418,15 +458,22 @@ def _validate_path_invariants(contract: Mapping[str, JSONValue]) -> None:
         for path in cast(list[str], contract["required_outputs"])
     ]
 
-    for _, editable_segments in editable:
-        for _, protected_segments in protected:
-            if _glob_patterns_overlap(editable_segments, protected_segments):
+    for _, editable_pattern in editable:
+        for _, protected_pattern in protected:
+            if _glob_patterns_overlap(editable_pattern, protected_pattern):
                 raise ContractInvariantError(
                     "editable and protected path surfaces overlap"
                 )
-    for _, output_segments in required:
-        for _, protected_segments in protected:
-            if _glob_patterns_overlap(output_segments, protected_segments):
+    for output, output_pattern in required:
+        if any(character in output for character in _GLOB_META):
+            # Both pinned Arbor merge seams call literal `git show branch:path`.
+            raise ContractInvariantError("required outputs must be literal git paths")
+        if not any(fnmatch.fnmatch(output, pattern) for _, pattern in editable):
+            raise ContractInvariantError(
+                "required output is outside the candidate editable surface"
+            )
+        for _, protected_pattern in protected:
+            if _glob_patterns_overlap(output_pattern, protected_pattern):
                 raise ContractInvariantError(
                     "required output and protected path surfaces overlap"
                 )
@@ -444,13 +491,18 @@ def _validate_role_and_split_invariants(contract: Mapping[str, JSONValue]) -> No
         raise ContractInvariantError("finalizer capability must be final-only")
 
     data = cast(dict[str, Any], contract["data"])
+    _validate_opaque_data_identifier(data["snapshot_id"], "data snapshot_id")
     splits = cast(dict[str, dict[str, Any]], data["splits"])
     for name, (expected_role, expected_sealed) in _EXPECTED_SPLITS.items():
         split = splits[name]
+        _validate_opaque_data_identifier(split["dataset_id"], f"{name} dataset_id")
         if split["role"] != expected_role or split["sealed"] is not expected_sealed:
             raise ContractInvariantError(
                 f"{name} split role or sealed state is inconsistent"
             )
+    manifest_hashes = [splits[name]["manifest_sha256"] for name in _SPLIT_ORDER]
+    if len(set(manifest_hashes)) != len(manifest_hashes):
+        raise ContractInvariantError("split manifest hashes must be pairwise distinct")
     if splits["final"]["query_budget"] != 1:
         raise ContractInvariantError("final split query budget must equal one")
 
@@ -464,6 +516,64 @@ def _validate_role_and_split_invariants(contract: Mapping[str, JSONValue]) -> No
     if budgets["max_final_queries"] != 1:
         raise ContractInvariantError("final run query budget must equal one")
 
+    source_version = data.get("source_version")
+    if isinstance(source_version, str) and _looks_like_locator(
+        source_version, reject_any_slash=True
+    ):
+        raise ContractInvariantError("data source_version must be a non-locating label")
+
+
+def _looks_like_locator(value: str, *, reject_any_slash: bool = False) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if (
+        stripped.startswith(("/", "\\", "~/", "./", "../"))
+        or _WINDOWS_DRIVE_RE.match(stripped)
+        or _URI_RE.match(stripped)
+        or _LOCATOR_SCHEME_RE.match(stripped)
+        or "\\" in stripped
+    ):
+        return True
+    if "/" in stripped and (reject_any_slash or _DATA_FILE_SUFFIX_RE.search(stripped)):
+        return True
+    return bool(_DATA_FILE_SUFFIX_RE.search(stripped))
+
+
+def _validate_opaque_data_identifier(identifier: str, field: str) -> None:
+    # C6 J06: split identities may select a manifest hash, never locate raw data.
+    if _looks_like_locator(identifier, reject_any_slash=True):
+        raise ContractInvariantError(
+            f"{field} must be an opaque non-locating identifier"
+        )
+
+
+def _validate_constraint_threshold(constraint: Mapping[str, JSONValue]) -> None:
+    operator = cast(str, constraint["operator"])
+    threshold = constraint["threshold"]
+    if operator == "in":
+        if not isinstance(threshold, list) or not threshold:
+            raise ContractInvariantError(
+                "membership constraint threshold must be a non-empty scalar array"
+            )
+        values = threshold
+    else:
+        if isinstance(threshold, (dict, list)):
+            raise ContractInvariantError("constraint threshold must be a JSON scalar")
+        values = [threshold]
+
+    for value in values:
+        if isinstance(value, (dict, list)):
+            raise ContractInvariantError(
+                "membership constraint threshold members must be JSON scalars"
+            )
+        if isinstance(value, str) and _looks_like_locator(value, reject_any_slash=True):
+            # ConstraintSpec.threshold is C6 C01's sole schema-open contract seam;
+            # C10 owns resolving all filesystem/URI split locators.
+            raise ContractInvariantError(
+                "constraint threshold cannot contain a filesystem or URI locator"
+            )
+
 
 def _validate_metric_invariants(contract: Mapping[str, JSONValue]) -> None:
     metrics = cast(dict[str, Any], contract["metrics"])
@@ -476,6 +586,8 @@ def _validate_metric_invariants(contract: Mapping[str, JSONValue]) -> None:
     constraint_names = [item["name"] for item in metrics["hard_constraints"]]
     if len(constraint_names) != len(set(constraint_names)):
         raise ContractInvariantError("hard-constraint names must be unique")
+    for constraint in metrics["hard_constraints"]:
+        _validate_constraint_threshold(constraint)
 
 
 def _key_is_secret_like(key: str) -> bool:
@@ -512,6 +624,7 @@ def _scan_secret_keys(value: JSONValue, path: str = "$") -> None:
 
 def _validate_invariants(contract: Mapping[str, JSONValue]) -> None:
     # C5 G01-G05 / C6 C01: reject inconsistent task facts before any Arbor call.
+    _validate_lexical_invariants(contract)
     _validate_time_invariants(contract)
     _validate_path_invariants(contract)
     _validate_role_and_split_invariants(contract)

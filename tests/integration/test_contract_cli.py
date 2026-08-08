@@ -84,3 +84,43 @@ def test_cli_freeze_failure_leaves_no_partial_output(
     else:
         assert not destination.exists()
     assert set(tmp_path.iterdir()) == before_entries
+
+
+def test_cli_time_overflow_is_sanitized_and_atomic(tmp_path: Path) -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["splits"]["development"]["time_range"]["start"] = (
+        "0001-01-01T00:00:00+23:59"
+    )
+    source = tmp_path / "overflow.json"
+    destination = tmp_path / "frozen.json"
+    sentinel = b"sentinel: previous complete snapshot\n"
+    _write_json(source, mapping)
+    destination.write_bytes(sentinel)
+
+    completed = run_contract_cli("freeze", source, "--output", destination)
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "Traceback" not in completed.stderr
+    assert destination.read_bytes() == sentinel
+
+
+def test_cli_deep_json_is_sanitized_and_atomic(tmp_path: Path) -> None:
+    text = json.dumps(valid_contract_mapping(), ensure_ascii=False)
+    needle = '"threshold": 0.2'
+    assert needle in text
+    source = tmp_path / "deep.json"
+    source.write_text(
+        text.replace(needle, f'"threshold": {"[" * 2000}0{"]" * 2000}', 1),
+        encoding="utf-8",
+    )
+    destination = tmp_path / "frozen.json"
+    sentinel = b"sentinel: previous complete snapshot\n"
+    destination.write_bytes(sentinel)
+
+    completed = run_contract_cli("freeze", source, "--output", destination)
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "Traceback" not in completed.stderr
+    assert destination.read_bytes() == sentinel

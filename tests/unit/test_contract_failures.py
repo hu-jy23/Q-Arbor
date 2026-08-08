@@ -31,6 +31,15 @@ def _frozen_contract_mapping() -> dict[str, Any]:
     return freeze_contract(valid_contract_mapping()).to_dict()
 
 
+def _replace_at_path(
+    mapping: dict[str, Any], path: tuple[str, ...], value: object
+) -> None:
+    target: dict[str, Any] = mapping
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+
 @pytest.mark.parametrize(
     "error_type",
     [
@@ -117,6 +126,33 @@ def test_nfc_normalization_induced_key_collision_is_rejected() -> None:
         load_contract(contract_fixture("nfc_key_collision.json"))
 
 
+def test_deep_raw_json_is_rejected_as_a_decode_error(tmp_path: Path) -> None:
+    text = json.dumps(valid_contract_mapping(), ensure_ascii=False)
+    needle = '"threshold": 0.2'
+    assert needle in text
+    source = tmp_path / "deep.json"
+    source.write_text(
+        text.replace(needle, f'"threshold": {"[" * 2000}0{"]" * 2000}', 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractDecodeError):
+        load_contract(source)
+
+
+def test_deep_mapping_is_rejected_at_normalization_boundaries() -> None:
+    nested: Any = 0
+    for _ in range(2000):
+        nested = [nested]
+    mapping = valid_contract_mapping()
+    mapping["metrics"]["hard_constraints"][0]["threshold"] = nested
+
+    with pytest.raises(ContractDecodeError):
+        freeze_contract(mapping)
+    with pytest.raises(ContractDecodeError):
+        canonical_contract_bytes({"nested": nested})
+
+
 def test_mapping_nfc_key_collision_is_rejected_before_schema_validation() -> None:
     mapping = valid_contract_mapping()
     mapping["metrics"]["hard_constraints"][0]["threshold"] = {
@@ -183,6 +219,20 @@ def test_every_split_requires_an_explicit_time_range() -> None:
 
 
 @pytest.mark.parametrize(
+    "boundary",
+    ["0001-01-01T00:00:00+23:59", "9999-12-31T23:59:59-23:59"],
+)
+def test_timezone_normalization_overflow_stays_inside_typed_boundary(
+    boundary: str,
+) -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["splits"]["development"]["time_range"]["start"] = boundary
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize(
     "unsafe_path",
     [
         "/absolute/candidate.py",
@@ -196,6 +246,22 @@ def test_unsafe_paths_are_rejected_by_the_frozen_schema(unsafe_path: str) -> Non
 
     with pytest.raises(ContractSchemaError):
         validate_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    "oversized_path",
+    [
+        "a" * 256,
+        "界" * 86,
+        "/".join("a" for _ in range(2050)),
+    ],
+)
+def test_paths_respect_git_and_filesystem_byte_limits(oversized_path: str) -> None:
+    mapping = valid_contract_mapping()
+    mapping["editable_surface"] = [oversized_path]
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
 
 
 @pytest.mark.parametrize("protected", ["strategies/**", "strategies/private/**"])
@@ -258,6 +324,196 @@ def test_secret_like_field_is_rejected_inside_schema_open_content() -> None:
         validate_contract(mapping)
 
 
+@pytest.mark.parametrize(
+    "threshold",
+    [
+        {"final_path": "/restricted/final.csv"},
+        {"extension": {"data_uri": "s3://restricted/gate.parquet"}},
+        {"nested": [{"dataset": {"location": "file:///sealed/final.arrow"}}]},
+    ],
+)
+def test_threshold_cannot_smuggle_nested_split_locators(threshold: object) -> None:
+    mapping = valid_contract_mapping()
+    mapping["metrics"]["hard_constraints"][0]["threshold"] = threshold
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    ("operator", "threshold"),
+    [
+        ("eq", "/restricted/final.csv"),
+        ("eq", "restricted/final"),
+        ("eq", "s3://restricted/gate.parquet"),
+        ("in", ["development", "file:///sealed/final.arrow"]),
+    ],
+)
+def test_threshold_scalar_values_cannot_be_data_locators(
+    operator: str, threshold: object
+) -> None:
+    mapping = valid_contract_mapping()
+    constraint = mapping["metrics"]["hard_constraints"][0]
+    constraint.update(operator=operator, threshold=threshold)
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    ("operator", "threshold"),
+    [
+        ("le", 0.2),
+        ("eq", "risk_off"),
+        ("in", ["low", "medium", "high"]),
+    ],
+)
+def test_threshold_keeps_scalar_statistical_semantics(
+    operator: str, threshold: object
+) -> None:
+    mapping = valid_contract_mapping()
+    constraint = mapping["metrics"]["hard_constraints"][0]
+    constraint.update(operator=operator, threshold=threshold)
+
+    assert (
+        freeze_contract(mapping).to_dict()["metrics"]["hard_constraints"][0][
+            "threshold"
+        ]
+        == threshold
+    )
+
+
+@pytest.mark.parametrize(
+    "required_output",
+    ["strategies/*.json", "strategies/candidate?.json", "strategies/[ab].json"],
+)
+def test_required_outputs_must_be_literal_git_paths(required_output: str) -> None:
+    mapping = valid_contract_mapping()
+    mapping["required_outputs"] = [required_output]
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+def test_required_output_must_be_inside_candidate_editable_surface() -> None:
+    mapping = valid_contract_mapping()
+    mapping["editable_surface"] = ["strategies/**"]
+    # A pre-existing uneditable file would satisfy Arbor's existence-only guard.
+    mapping["required_outputs"] = ["reports/result.json"]
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+def test_path_overlap_uses_arbor_full_path_fnmatch_semantics() -> None:
+    mapping = valid_contract_mapping()
+    mapping["editable_surface"] = ["models/*.py"]
+    mapping["protected_paths"] = ["models/private/*.py"]
+    mapping["required_outputs"] = []
+
+    # Python/Arbor fnmatch lets '*' consume '/', so the patterns share a witness.
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize("split_name", ["development", "gate", "final"])
+@pytest.mark.parametrize(
+    "dataset_id",
+    [
+        "restricted/final.csv",
+        "file:final.csv",
+        "C:/restricted/final.csv",
+        "C:restricted.csv",
+    ],
+)
+def test_split_dataset_ids_are_opaque_non_locating_identifiers(
+    split_name: str, dataset_id: str
+) -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["splits"][split_name]["dataset_id"] = dataset_id
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    "snapshot_id",
+    [
+        "restricted/final.csv",
+        "file:/restricted/final.csv",
+        "C:restricted.csv",
+    ],
+)
+def test_snapshot_id_is_an_opaque_non_locating_identifier(snapshot_id: str) -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["snapshot_id"] = snapshot_id
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+def test_data_identifiers_keep_dotted_and_hyphenated_labels() -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["snapshot_id"] = "vendor.snapshot-2026.08"
+    for split_name, split in mapping["data"]["splits"].items():
+        split["dataset_id"] = f"vendor-{split_name}.v1"
+
+    frozen = freeze_contract(mapping).to_dict()
+
+    assert frozen["data"]["snapshot_id"] == "vendor.snapshot-2026.08"
+
+
+def test_data_identifiers_accept_nonlocating_urn_labels() -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["snapshot_id"] = "urn:vendor:snapshot:v1"
+    for split_name, split in mapping["data"]["splits"].items():
+        split["dataset_id"] = f"urn:vendor:{split_name}:v1"
+
+    frozen = freeze_contract(mapping).to_dict()
+
+    assert frozen["data"]["snapshot_id"] == "urn:vendor:snapshot:v1"
+
+
+@pytest.mark.parametrize(
+    ("left_split", "right_split"),
+    [
+        ("development", "gate"),
+        ("development", "final"),
+        ("gate", "final"),
+    ],
+)
+def test_split_manifest_hashes_are_pairwise_distinct(
+    left_split: str, right_split: str
+) -> None:
+    mapping = valid_contract_mapping()
+    splits = mapping["data"]["splits"]
+    splits[right_split]["manifest_sha256"] = splits[left_split]["manifest_sha256"]
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    "source_version",
+    ["/restricted/source", "file:restricted.csv", "s3://restricted/snapshot"],
+)
+def test_source_version_is_a_label_not_a_data_locator(source_version: str) -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["source_version"] = source_version
+
+    with pytest.raises(ContractInvariantError):
+        freeze_contract(mapping)
+
+
+def test_source_version_accepts_non_locating_provenance_label() -> None:
+    mapping = valid_contract_mapping()
+    mapping["data"]["source_version"] = "vendor-release-2026.08"
+
+    assert freeze_contract(mapping).to_dict()["data"]["source_version"] == (
+        "vendor-release-2026.08"
+    )
+
+
 def test_invalid_metric_direction_is_rejected() -> None:
     mapping = _frozen_contract_mapping()
     mapping["metrics"]["primary"]["direction"] = "sideways"
@@ -282,6 +538,56 @@ def test_identity_fields_reject_non_identifiers(
     target[field] = "contains spaces"
 
     with pytest.raises(ContractSchemaError):
+        validate_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("contract_id",),
+        ("task_id",),
+        ("plugin", "name"),
+        ("data", "snapshot_id"),
+        ("data", "splits", "development", "dataset_id"),
+        ("data", "splits", "gate", "dataset_id"),
+        ("data", "splits", "final", "dataset_id"),
+        ("cost_model", "model_id"),
+    ],
+)
+def test_identifier_fullmatch_rejects_trailing_newline(
+    path: tuple[str, ...],
+) -> None:
+    mapping = _frozen_contract_mapping()
+    target: Any = mapping
+    for part in path:
+        target = target[part]
+    _replace_at_path(mapping, path, f"{target}\n")
+
+    with pytest.raises(ContractInvariantError):
+        validate_contract(mapping)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("contract_hash",),
+        ("plugin", "code_sha256"),
+        ("data", "snapshot_sha256"),
+        ("data", "schema_sha256"),
+        ("data", "splits", "development", "manifest_sha256"),
+        ("data", "splits", "gate", "manifest_sha256"),
+        ("data", "splits", "final", "manifest_sha256"),
+        ("cost_model", "sha256"),
+    ],
+)
+def test_hash_fullmatch_rejects_trailing_newline(path: tuple[str, ...]) -> None:
+    mapping = _frozen_contract_mapping()
+    target: Any = mapping
+    for part in path:
+        target = target[part]
+    _replace_at_path(mapping, path, f"{target}\n")
+
+    with pytest.raises(ContractInvariantError):
         validate_contract(mapping)
 
 
