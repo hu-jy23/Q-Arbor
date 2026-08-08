@@ -287,20 +287,116 @@ def test_contract_path_hash_drift_fails_closed(
 @pytest.mark.parametrize(
     "mutation",
     [
+        pytest.param(
+            lambda value: value["metrics"]["primary"].update(direction="minimize"),
+            id="direction",
+        ),
+        pytest.param(
+            lambda value: value["objective"].update(
+                baseline_ref="baseline/legally-substituted"
+            ),
+            id="baseline-ref",
+        ),
+        pytest.param(
+            lambda value: value.update(protected_paths=["contracts/**", "data/**"]),
+            id="protected-paths",
+        ),
+        pytest.param(
+            lambda value: value.update(
+                required_outputs=["strategies/substituted.json"]
+            ),
+            id="required-outputs",
+        ),
+    ],
+)
+def test_duck_contract_cannot_substitute_legal_projected_fields(
+    contract: QuantResearchContract,
+    contract_path: Path,
+    mutation: Any,
+) -> None:
+    forged_snapshot = contract.to_dict()
+    mutation(forged_snapshot)
+
+    # The forged object retains an authentic digest and payload hash while its
+    # projected facts differ from the persisted snapshot.
+    forged = StubContract(forged_snapshot, contract.sha256)
+    with pytest.raises(TypeError, match="QuantResearchContract"):
+        project_to_arbor(  # type: ignore[arg-type]
+            forged,
+            contract_path=contract_path,
+            trunk_branch="q-arbor/trunk",
+        )
+
+
+def test_replaced_contract_path_is_revalidated_as_stale(
+    contract: QuantResearchContract, contract_path: Path
+) -> None:
+    project_to_arbor(
+        contract,
+        contract_path=contract_path,
+        trunk_branch="q-arbor/trunk",
+    )
+
+    replacement_mapping = valid_contract_mapping()
+    replacement_mapping["contract_id"] = "synthetic.contract.replacement"
+    replacement = freeze_contract(replacement_mapping)
+    replacement.write(contract_path)
+
+    with pytest.raises(ValueError, match="projected contract snapshot"):
+        project_to_arbor(
+            contract,
+            contract_path=contract_path,
+            trunk_branch="q-arbor/trunk",
+        )
+
+
+def test_canonically_identical_pretty_snapshot_is_accepted(
+    contract: QuantResearchContract, contract_path: Path
+) -> None:
+    contract_path.write_text(
+        json.dumps(contract.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    projection = project_to_arbor(
+        contract,
+        contract_path=contract_path,
+        trunk_branch="q-arbor/trunk",
+    )
+    assert projection["q_contract_hash"] == contract.sha256
+
+
+def test_corrupted_contract_object_canonical_fails_closed(
+    contract: QuantResearchContract, contract_path: Path
+) -> None:
+    corrupted = freeze_contract(contract.to_dict())
+    object.__setattr__(corrupted, "_canonical", b"{}")
+
+    with pytest.raises(ValueError, match="canonical snapshot"):
+        project_to_arbor(
+            corrupted,
+            contract_path=contract_path,
+            trunk_branch="q-arbor/trunk",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
         lambda value: value.update(schema_version="2.0"),
         lambda value: value.update(contract_hash="b" * 64),
         lambda value: value["metrics"]["primary"].update(direction="sideways"),
         lambda value: value.update(protected_paths=["../secret"]),
     ],
 )
-def test_malformed_contract_projection_fails_closed(
+def test_malformed_duck_contract_projection_fails_closed(
     contract: QuantResearchContract,
     contract_path: Path,
     mutation: Any,
 ) -> None:
     malformed = contract.to_dict()
     mutation(malformed)
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError, match="QuantResearchContract"):
         project_to_arbor(  # type: ignore[arg-type]
             StubContract(malformed, contract.sha256),
             contract_path=contract_path,

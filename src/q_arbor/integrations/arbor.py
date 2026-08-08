@@ -9,18 +9,22 @@ from __future__ import annotations
 
 import math
 import os
-import re
 import shlex
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from q_arbor.contracts import QuantResearchContract, load_contract
+from q_arbor.contracts import (
+    QuantResearchContract,
+    canonical_contract_bytes,
+    compute_contract_hash,
+    load_contract,
+    validate_contract,
+)
 
 _PROJECTION_VERSION = "q-arbor.arbor-metadata.v1"
-_HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _ALWAYS_KEYS = (
     "projection_version",
     "eval_cmd",
@@ -125,7 +129,9 @@ def project_to_arbor(
 ) -> ArborRunProjection:
     """Project validated contract facts into Arbor's development-only metadata."""
 
-    payload, contract_hash = _read_contract(contract)
+    # C6 C01/J01 and the contract leg of J04: mutable Arbor metadata must
+    # derive from one validated canonical contract snapshot.
+    payload, contract_hash, contract_canonical = _read_contract(contract)
     objective = _mapping_at(payload, "objective")
     metrics = _mapping_at(payload, "metrics")
     primary = _mapping_at(metrics, "primary")
@@ -143,12 +149,15 @@ def project_to_arbor(
     baseline_ref = _string_at(objective, "baseline_ref")
     protected_paths = _path_list_at(payload, "protected_paths", allow_empty=False)
     required_outputs = _path_list_at(payload, "required_outputs", allow_empty=True)
-    resolved_contract_path = _contract_path(contract_path, contract_hash)
+    resolved_contract_path = _contract_path(
+        contract_path, contract_hash, contract_canonical
+    )
     checked_branch = _branch_name(trunk_branch)
     checked_baseline = _baseline_score(baseline_score)
 
-    # shlex.join quotes both placeholders as complete shell arguments.  Arbor's
-    # textual replacement therefore preserves spaces in its cwd/node values.
+    # C5 G05: this whitelist exposes development evaluation only; gate/final
+    # capabilities remain outside the C7 projection. shlex.join quotes both
+    # placeholders as complete shell arguments.
     eval_cmd = shlex.join(
         (
             "python",
@@ -179,20 +188,24 @@ def project_to_arbor(
     )
 
 
-def _read_contract(contract: object) -> tuple[Mapping[str, Any], str]:
-    to_dict = getattr(contract, "to_dict", None)
-    if not callable(to_dict):
-        raise TypeError("contract must provide the QuantResearchContract to_dict API")
-    snapshot = to_dict()
-    if not isinstance(snapshot, Mapping):
-        raise TypeError("contract.to_dict() must return a mapping")
-    if snapshot.get("schema_version") != "1.0":
-        raise ValueError("contract must use the frozen QuantResearchContract schema")
+def _read_contract(contract: object) -> tuple[Mapping[str, Any], str, bytes]:
+    if type(contract) is not QuantResearchContract:
+        raise TypeError("contract must be an exact QuantResearchContract instance")
+    trusted = cast(QuantResearchContract, contract)
 
-    contract_hash = getattr(contract, "sha256", None)
-    if not isinstance(contract_hash, str) or not _HASH_PATTERN.fullmatch(contract_hash):
-        raise ValueError("contract.sha256 must be a lowercase SHA-256 digest")
-    return snapshot, contract_hash
+    snapshot = trusted.to_dict()
+    validated = validate_contract(snapshot, verify_hash=True)
+    recomputed_hash = compute_contract_hash(snapshot)
+    canonical = canonical_contract_bytes(snapshot)
+
+    if trusted.sha256 != recomputed_hash or validated.sha256 != recomputed_hash:
+        raise ValueError("contract object does not match its recomputed canonical hash")
+    if (
+        trusted.to_json().encode("utf-8") != canonical
+        or validated.to_json().encode("utf-8") != canonical
+    ):
+        raise ValueError("contract object does not match its canonical snapshot")
+    return snapshot, recomputed_hash, canonical
 
 
 def _mapping_at(mapping: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -237,7 +250,9 @@ def _relative_contract_path(value: object, field: str) -> str:
     return value
 
 
-def _contract_path(value: str | os.PathLike[str], expected_hash: str) -> str:
+def _contract_path(
+    value: str | os.PathLike[str], expected_hash: str, expected_canonical: bytes
+) -> str:
     try:
         raw = os.fspath(value)
     except TypeError as exc:
@@ -255,7 +270,8 @@ def _contract_path(value: str | os.PathLike[str], expected_hash: str) -> str:
     if not resolved.is_file():
         raise ValueError("contract_path must resolve to a regular file")
     persisted = load_contract(resolved)
-    if persisted.sha256 != expected_hash:
+    _, persisted_hash, persisted_canonical = _read_contract(persisted)
+    if persisted_hash != expected_hash or persisted_canonical != expected_canonical:
         raise ValueError(
             "contract_path does not contain the projected contract snapshot"
         )
