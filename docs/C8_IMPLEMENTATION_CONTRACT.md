@@ -29,6 +29,7 @@ validate_node(mapping) -> QuantHypothesisNode
 freeze_tree(mapping) -> QHypothesisTree             # replaces tree_hash
 validate_tree(mapping, *, verify_hash=True) -> QHypothesisTree
 load_tree(path) -> QHypothesisTree
+QHypothesisTree.write(path) -> None                   # same-dir temp, fsync, replace
 
 TreeMutation.add_node(draft: NodeDraft) -> TreeMutation
 TreeMutation.update_node(node_id, updates) -> TreeMutation
