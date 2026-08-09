@@ -816,25 +816,89 @@ def test_artifact_path_segment_and_total_utf8_limits_are_enforced(path: str) -> 
         ArtifactRef.from_mapping(mapping)
 
 
-def test_changed_protected_path_is_invalid_before_evaluation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("candidate_path", "extra_path", "failure_summary"),
+    [
+        (
+            "candidates/candidate.json",
+            "evaluator/config.json",
+            "candidate.surface.protected",
+        ),
+        (
+            "candidates/candidate.json",
+            "reports/result.json",
+            "candidate.surface.outside_editable",
+        ),
+        (
+            "candidates/other.json",
+            None,
+            "candidate.surface.missing_output",
+        ),
+    ],
+)
+def test_invalid_candidate_surface_returns_exact_bounded_validation(
+    tmp_path: Path,
+    candidate_path: str,
+    extra_path: str | None,
+    failure_summary: str,
+) -> None:
     root = tmp_path / "case"
     plugin, identity, contract, _, _ = validated_synthetic_components(root / "valid")
     candidate_root = root / "protected"
-    protected = candidate_root / "evaluator" / "config.json"
-    protected.parent.mkdir(parents=True)
-    protected.write_bytes(b"{}")
+    changed_paths = [candidate_path]
+    if extra_path is not None:
+        extra = candidate_root.joinpath(*extra_path.split("/"))
+        extra.parent.mkdir(parents=True)
+        extra.write_bytes(b"{}")
+        changed_paths.append(extra_path)
     candidate = materialize_candidate(
         candidate_root,
         contract,
         fixture_bytes("synthetic_planted_candidate.json"),
-        changed_paths=("candidates/candidate.json", "evaluator/config.json"),
+        relative_path=candidate_path,
+        changed_paths=tuple(sorted(changed_paths)),
     )
 
     validation = plugin.validate(candidate, contract)
 
     assert validation.status == "invalid_candidate"
     assert validation.failure.failure_type == "invalid_candidate"
+    assert validation.failure.summary == failure_summary
+    assert [item.name for item in validation.checks] == [
+        "candidate.kind",
+        "candidate.surface",
+        "synthetic.payload",
+    ]
+    assert [item.name for item in validation.checks if item.status == "fail"] == [
+        "candidate.surface"
+    ]
     assert identity == plugin.identity
+
+
+def test_surface_and_domain_failures_are_both_retained_with_surface_precedence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "case"
+    plugin, _, contract, _, _ = validated_synthetic_components(root / "valid")
+    candidate_root = root / "invalid"
+    protected = candidate_root / "evaluator" / "config.json"
+    protected.parent.mkdir(parents=True)
+    protected.write_bytes(b"{}")
+    candidate = materialize_candidate(
+        candidate_root,
+        contract,
+        fixture_bytes("synthetic_label_leak_candidate.json"),
+        changed_paths=("candidates/candidate.json", "evaluator/config.json"),
+    )
+
+    validation = plugin.validate(candidate, contract)
+
+    assert validation.status == "invalid_candidate"
+    assert validation.failure.summary == "candidate.surface.protected"
+    assert [item.name for item in validation.checks if item.status == "fail"] == [
+        "candidate.surface",
+        "synthetic.payload",
+    ]
 
 
 @pytest.mark.parametrize("runtime_part", ["evaluator", "config"])

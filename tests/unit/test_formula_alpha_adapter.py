@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -21,8 +23,6 @@ from q_arbor.plugins.formula_alpha import (
 from q_arbor.plugins.formula_alpha.testing import (
     make_formula_alpha_mock_development_split,
 )
-
-from q_arbor.contracts import freeze_contract
 from tests.evaluation_helpers import (
     bind_validation,
     diagnostic_check_name,
@@ -175,6 +175,7 @@ def test_formula_closed_grammar_accepts_only_declared_public_expressions(
     assert validation.canonical_form_sha256 is not None
     assert [item.name for item in validation.checks] == [
         "candidate.kind",
+        "candidate.surface",
         "formula.expression",
         "formula.public_schema",
     ]

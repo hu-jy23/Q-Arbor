@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -17,7 +18,6 @@ from q_arbor.evaluation import (
 )
 from q_arbor.plugins.hm1 import HM1EngineOutput, HM1FuturesPlugin
 from q_arbor.plugins.hm1.testing import make_hm1_mock_development_split
-
 from tests.evaluation_helpers import (
     bind_validation,
     diagnostic_check_name,
@@ -201,7 +201,11 @@ def test_hm1_valid_strategy_is_ast_checked_without_import_or_execution(
 
     assert validation.status == "valid"
     assert validation.canonical_form_sha256 is not None
-    assert [item.name for item in validation.checks] == ["candidate.kind", "hm1.ast"]
+    assert [item.name for item in validation.checks] == [
+        "candidate.kind",
+        "candidate.surface",
+        "hm1.ast",
+    ]
     assert all(item.status == "pass" for item in validation.checks)
 
 

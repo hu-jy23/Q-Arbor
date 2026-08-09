@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -23,7 +24,6 @@ from q_arbor.plugins.synthetic import (
     synthetic_contract_draft,
     synthetic_fixture_identities,
 )
-
 from tests.evaluation_helpers import (
     REPOSITORY_ROOT,
     directory_entries,
@@ -156,6 +156,11 @@ def test_semantically_equal_candidate_encodings_share_only_canonical_form(
     second_validation = plugin.validate(second, contract)
 
     assert first_validation.status == second_validation.status == "valid"
+    assert [item.name for item in first_validation.checks] == [
+        "candidate.kind",
+        "candidate.surface",
+        "synthetic.payload",
+    ]
     assert first.artifact.sha256 != second.artifact.sha256
     assert first.candidate_hash != second.candidate_hash
     assert (
