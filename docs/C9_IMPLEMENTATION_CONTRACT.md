@@ -114,6 +114,7 @@ MetricValue.from_mapping(mapping) -> MetricValue
 EvaluationFailure.from_mapping(mapping) -> EvaluationFailure
 FamilyEvidence.from_mapping(mapping) -> FamilyEvidence
 FoldPolicy.from_mapping(mapping) -> FoldPolicy
+EvaluationSummary.from_result(result) -> EvaluationSummary
 
 MaterializationReceipt.scan(root, relative_paths) -> MaterializationReceipt
 CandidateArtifact.from_bytes(
@@ -390,11 +391,22 @@ class AuthorizedSplit(Protocol):
     @property
     def artifacts(self) -> ArtifactSink: ...
     def make_result(
-        self, *, status, primary_metric, constraints, diagnostics,
-        fold_metrics, costs, checks, artifacts=(), failure=None,
-        warnings=(),
+        self, *, status: str, primary_metric: MetricValue,
+        constraints: Sequence[CheckResult],
+        diagnostics: Sequence[MetricValue],
+        fold_metrics: Sequence[Mapping[str, object]],
+        costs: Mapping[str, object], checks: Sequence[CheckResult],
+        artifacts: Sequence[ArtifactRef] = (),
+        failure: EvaluationFailure | None = None,
+        warnings: Sequence[ReasonCode] = (),
     ) -> EvaluationResult: ...
 ```
+
+`EvaluationSummary.from_result` is the only public summary constructor and is
+the shared implementation behind all three plugin `summarize` methods.
+`make_result` accepts only the common wrappers and the two frozen closed mapping
+shapes for folds/costs; it never accepts an adapter-specific result object or an
+arbitrary object whose fields are guessed at runtime.
 
 There is no generic public `AuthorizedSplit` constructor. C10 owns production
 minting. C9 adapter modules expose only their fixed development mock/fixture
