@@ -13,8 +13,8 @@ from typing import Any, Final, cast
 from q_arbor.contracts import QuantResearchContract
 
 from .candidate import (
-    CandidateReceipt,
     _OPEN_SUPPORTS_DIR_FD,
+    CandidateReceipt,
     _contract_snapshot,
     _plugin_matches_contract,
     _readonly_nofollow_flags,
