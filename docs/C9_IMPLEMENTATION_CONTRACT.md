@@ -312,10 +312,12 @@ request and binding, then can be summarized through the common API.
 class QuantTaskPlugin(Protocol):
     @property
     def identity(self) -> PluginIdentity: ...
-    def validate(self, candidate: CandidateArtifact,
-                 contract: QuantResearchContract) -> CandidateValidation: ...
-    def evaluate(self, candidate: ValidatedCandidate,
-                 split: AuthorizedSplit) -> EvaluationResult: ...
+    def validate(
+        self, candidate: CandidateArtifact, contract: QuantResearchContract
+    ) -> CandidateValidation: ...
+    def evaluate(
+        self, candidate: ValidatedCandidate, split: AuthorizedSplit
+    ) -> EvaluationResult: ...
     def summarize(self, result: EvaluationResult) -> EvaluationSummary: ...
 ```
 
@@ -411,17 +413,20 @@ class SplitDataView(Protocol):
     @property
     def split_manifest_sha256(self) -> str: ...
 
+
 class ArtifactResolver(Protocol):
     def read_bytes(self, ref: ArtifactRef) -> bytes: ...
     def verify(self, ref: ArtifactRef) -> None: ...
-    def verify_issued(self, ref: ArtifactRef, *, request_id: str,
-                      runtime_lock_sha256: str) -> None: ...
+    def verify_issued(
+        self, ref: ArtifactRef, *, request_id: str, runtime_lock_sha256: str
+    ) -> None: ...
+
 
 class ArtifactSink(Protocol):
     @property
     def issued_refs(self) -> tuple[ArtifactRef, ...]: ...
-    def put(self, *, kind: str, media_type: str,
-            content: bytes) -> ArtifactRef: ...
+    def put(self, *, kind: str, media_type: str, content: bytes) -> ArtifactRef: ...
+
 
 class AuthorizedSplit(Protocol):
     @property
@@ -435,11 +440,15 @@ class AuthorizedSplit(Protocol):
     @property
     def artifacts(self) -> ArtifactSink: ...
     def make_result(
-        self, *, status: str, primary_metric: MetricValue,
+        self,
+        *,
+        status: str,
+        primary_metric: MetricValue,
         constraints: Sequence[CheckResult],
         diagnostics: Sequence[MetricValue],
         fold_metrics: Sequence[Mapping[str, object]],
-        costs: Mapping[str, object], checks: Sequence[CheckResult],
+        costs: Mapping[str, object],
+        checks: Sequence[CheckResult],
         artifacts: Sequence[ArtifactRef] = (),
         failure: EvaluationFailure | None = None,
         warnings: Sequence[ReasonCode] = (),
