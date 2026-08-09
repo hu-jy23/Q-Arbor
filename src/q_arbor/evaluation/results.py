@@ -1139,6 +1139,16 @@ def validate_evaluation_evidence(
         or result.split_role != request.split_role
     ):
         raise EvaluationIntegrityError("result/request binding differs")
+    provenance = result.provenance
+    # C6 J04 and C9 §7 require observed evidence to bind the complete
+    # result/request identity, even while a node has no candidate projection.
+    if (
+        provenance["candidate_sha256"] != request.candidate_hash
+        or provenance["contract_hash"] != request.contract_hash
+        or provenance["plugin_code_sha256"] != request.plugin.code_sha256
+        or provenance["split_manifest_hash"] != request.split_manifest_hash
+    ):
+        raise EvaluationIntegrityError("result provenance differs from request")
     if request.node_id != node.id or request.attempt_id not in node.attempt_ids:
         raise EvaluationIntegrityError("request does not bind the target node attempt")
     if (

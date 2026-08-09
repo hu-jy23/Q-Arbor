@@ -35,12 +35,16 @@ from q_arbor.evaluation import (
     freeze_evaluation_result,
     load_evaluation_result,
     make_access_denied_result,
+    validate_evaluation_evidence,
 )
 from q_arbor.evaluation import runtime as evaluation_runtime
 from q_arbor.evaluation.candidate import _classify_candidate_surface
 from q_arbor.evaluation.codec import decode_json_bytes, normalize_mapping
 from q_arbor.evaluation.results import _freeze_controlled_evaluation_result
+from q_arbor.hypotheses import freeze_node
+from tests.evaluation_helpers import synthetic_case
 from tests.helpers import valid_contract_mapping
+from tests.hypothesis_helpers import valid_node_mapping
 
 
 def _artifact_mapping(**updates: object) -> dict[str, object]:
@@ -684,6 +688,70 @@ def test_result_round_trip_summary_and_hash_binding(tmp_path: Path) -> None:
     tampered["provenance"]["seed"] = 19
     with pytest.raises(EvaluationIntegrityError):
         freeze_evaluation_result(tampered, binding=binding)
+
+
+def test_evidence_binding_rejects_a_different_candidate_request(
+    tmp_path: Path,
+) -> None:
+    result_case = synthetic_case(
+        tmp_path / "result",
+        signal_column="planted_signal",
+    )
+    request_case = synthetic_case(
+        tmp_path / "request",
+        signal_column="null_signal",
+        request_id=result_case.request.request_id,
+    )
+    assert result_case.result.provenance["candidate_sha256"] != (
+        request_case.request.candidate_hash
+    )
+
+    node_mapping = valid_node_mapping()
+    node_mapping.update(
+        id=result_case.request.node_id,
+        status="running",
+        lifecycle="running",
+        admissibility="unevaluated",
+        score=None,
+        candidate_id=None,
+        candidate_artifact=None,
+        attempt_ids=[result_case.request.attempt_id],
+        evidence_refs=[],
+        insights=[],
+    )
+    node_mapping["scope"]["data_snapshot_sha256"] = result_case.result.provenance[
+        "data_snapshot_sha256"
+    ]
+    node_mapping["scope"]["cost_model_sha256"] = result_case.result.costs[
+        "cost_model_sha256"
+    ]
+    node = freeze_node(node_mapping)
+    evidence = {
+        "evidence_id": "evidence.cross_candidate",
+        "attempt_id": result_case.request.attempt_id,
+        "result_id": result_case.result.result_id,
+        "split_role": result_case.result.split_role,
+        "level": "observed",
+        "claim": "The result supports only its exact candidate request.",
+        "conditions": [],
+        "status": "valid",
+        "artifact_refs": [item.to_dict() for item in result_case.result.artifacts],
+    }
+    result_before = result_case.result.to_json()
+    request_before = request_case.request.to_json()
+    node_before = node.to_json()
+
+    with pytest.raises(EvaluationIntegrityError, match="result provenance"):
+        validate_evaluation_evidence(
+            result_case.result,
+            request=request_case.request,
+            node=node,
+            evidence=evidence,
+        )
+
+    assert result_case.result.to_json() == result_before
+    assert request_case.request.to_json() == request_before
+    assert node.to_json() == node_before
 
 
 def test_access_denied_factory_is_exact_null_projection(tmp_path: Path) -> None:
