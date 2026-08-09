@@ -665,6 +665,9 @@ def test_request_rejects_manifest_candidate_receipt_and_plugin_identity_drift(
     )
     valid = make_request(contract, receipt).to_dict()
     mutations = []
+    wrong_contract = copy.deepcopy(valid)
+    wrong_contract["contract_hash"] = "f" * 64
+    mutations.append(wrong_contract)
     wrong_manifest = copy.deepcopy(valid)
     wrong_manifest["split_manifest_hash"] = "f" * 64
     mutations.append(wrong_manifest)
@@ -923,6 +926,66 @@ def test_issued_artifact_is_bound_to_complete_runtime_lock(tmp_path: Path) -> No
     assert runtime_a.lock.config_sha256 == runtime_b.lock.config_sha256
     assert runtime_a.lock.sha256 != runtime_b.lock.sha256
     assert identity == receipt.plugin_identity
+
+
+def test_put_rejects_same_bytes_preplanted_during_exclusive_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "case"
+    _, _, contract, _, receipt = validated_synthetic_components(root)
+    request = make_request(contract, receipt, request_id="request.preplanted")
+    runtime = runtime_fixture(root, contract)
+    from q_arbor.evaluation import ContentAddressedArtifactStore
+
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    sink = store.scope(
+        request_id=request.request_id,
+        produced_by_event_id="event.preplanted",
+        runtime_lock=runtime.lock,
+    )
+    content = b'{"safe":true}'
+    real_open = os.open
+    injected = False
+
+    def inject_same_bytes_before_exclusive_create(
+        path: str | bytes,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal injected
+        if not injected and flags & os.O_CREAT and flags & os.O_EXCL:
+            injected = True
+            planted_fd = real_open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=dir_fd,
+            )
+            try:
+                offset = 0
+                while offset < len(content):
+                    offset += os.write(planted_fd, content[offset:])
+            finally:
+                os.close(planted_fd)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", inject_same_bytes_before_exclusive_create)
+
+    with pytest.raises(EvaluationBoundaryError):
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+
+    scope_name = hashlib.sha256(request.request_id.encode("utf-8")).hexdigest()
+    issued_directory = store_root / "artifacts" / "evaluations" / scope_name / ".issued"
+    assert injected is True
+    assert sink.issued_refs == ()
+    assert list(issued_directory.iterdir()) == []
 
 
 def test_result_cannot_replay_an_artifact_issued_under_another_runtime_lock(
