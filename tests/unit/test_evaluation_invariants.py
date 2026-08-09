@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import inspect
+import json
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
+    ContentAddressedArtifactStore,
     EvaluationBoundaryError,
     EvaluationIntegrityError,
     EvaluationInvariantError,
@@ -22,6 +24,7 @@ from q_arbor.evaluation import (
     freeze_candidate_validation,
     freeze_evaluation_request,
     freeze_evaluation_result,
+    load_evaluation_result,
     make_access_denied_result,
     make_candidate_failure_result,
     validate_evaluation_result,
@@ -42,6 +45,7 @@ from tests.evaluation_helpers import (
     synthetic_case,
     validated_synthetic_components,
 )
+from tests.hypothesis_helpers import canonical_json
 
 
 def _terminal_binding(
@@ -1044,13 +1048,13 @@ def test_issued_artifact_is_bound_to_complete_runtime_lock(tmp_path: Path) -> No
     store.verify_issued(
         ref,
         request_id=request.request_id,
-        runtime_lock_sha256=runtime_a.lock.sha256,
+        runtime_lock=runtime_a.lock,
     )
     with pytest.raises(EvaluationIntegrityError):
         store.verify_issued(
             ref,
             request_id=request.request_id,
-            runtime_lock_sha256=runtime_b.lock.sha256,
+            runtime_lock=runtime_b.lock,
         )
     assert runtime_a.lock.config_sha256 == runtime_b.lock.config_sha256
     assert runtime_a.lock.sha256 != runtime_b.lock.sha256
@@ -1155,6 +1159,70 @@ def test_result_cannot_replay_an_artifact_issued_under_another_runtime_lock(
 
     with pytest.raises(EvaluationIntegrityError):
         freeze_evaluation_result(mapping, binding=binding_b)
+
+
+@pytest.mark.parametrize("operation", ["freeze", "load"])
+def test_result_freeze_and_load_reject_tampered_scope_before_artifact_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    sink = case.store.scope(
+        request_id=case.request.request_id,
+        produced_by_event_id="event.evaluation.synthetic",
+        runtime_lock=case.runtime.lock,
+    )
+    ref = sink.put(
+        kind="q-arbor.aggregate-metrics.v1",
+        media_type="application/json",
+        content=b'{"bound":true}',
+    )
+    mapping = case.result.to_dict()
+    mapping["artifacts"] = [ref.to_dict()]
+    result = freeze_evaluation_result(mapping, binding=case.binding)
+    source = tmp_path / "result.json"
+    result.write(source)
+    store_root = tmp_path / "case" / "artifact-store"
+    namespace = hashlib.sha256(case.request.request_id.encode("utf-8")).hexdigest()
+    scope_path = store_root / "artifacts" / "evaluations" / namespace / ".scope.json"
+    scope_mapping = json.loads(scope_path.read_bytes())
+    scope_mapping["outside_path"] = str(tmp_path / "outside-secret")
+    scope_path.write_bytes(canonical_json(scope_mapping).encode("utf-8"))
+    artifact_path = store_root / Path(ref.relative_path)
+    record_name = hashlib.sha256(ref.artifact_id.encode("utf-8")).hexdigest()
+    record_path = scope_path.parent / ".issued" / f"{record_name}.json"
+    tracked = (source, scope_path, record_path, artifact_path)
+    before = tuple(path.read_bytes() for path in tracked)
+    mapping_before = copy.deepcopy(mapping)
+    result_before = result.to_json()
+    content_reads: list[ArtifactRef] = []
+
+    def fail_before_content(
+        self: ContentAddressedArtifactStore,
+        artifact: ArtifactRef,
+    ) -> bytes:
+        del self
+        content_reads.append(artifact)
+        raise AssertionError("artifact content was read before scope validation")
+
+    monkeypatch.setattr(
+        ContentAddressedArtifactStore, "read_bytes", fail_before_content
+    )
+    with pytest.raises(EvaluationIntegrityError):
+        if operation == "freeze":
+            freeze_evaluation_result(mapping, binding=case.binding)
+        else:
+            load_evaluation_result(
+                source,
+                binding=case.binding,
+                expected_sha256=result.sha256,
+            )
+
+    assert content_reads == []
+    assert tuple(path.read_bytes() for path in tracked) == before
+    assert mapping == mapping_before
+    assert result.to_json() == result_before
 
 
 def test_result_artifacts_are_unique_and_canonically_ordered(tmp_path: Path) -> None:

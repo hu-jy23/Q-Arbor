@@ -246,9 +246,9 @@ class FileArtifactResolver:
         ref: ArtifactRef,
         *,
         request_id: str,
-        runtime_lock_sha256: str,
+        runtime_lock: VerifiedRuntimeLock,
     ) -> None:
-        del request_id, runtime_lock_sha256
+        del request_id, runtime_lock
         self.verify(ref)
 
 

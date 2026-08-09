@@ -4,6 +4,10 @@ import copy
 import hashlib
 import inspect
 import json
+import multiprocessing
+import os
+import stat
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -20,6 +24,7 @@ from q_arbor.evaluation import (
     EvaluationDecodeError,
     EvaluationIntegrityError,
     EvaluationInvariantError,
+    EvaluationPersistenceError,
     EvaluationSchemaError,
     EvaluationSummary,
     FoldPolicy,
@@ -590,6 +595,99 @@ def test_runtime_config_policy_is_closed_sorted_unique_and_secret_free(
         )
 
 
+def _issued_artifact_fixture(
+    root: Path,
+    *,
+    request_id: str = "request.artifact",
+    produced_by_event_id: str = "event.artifact",
+) -> tuple[Any, ContentAddressedArtifactStore, Any, ArtifactRef, Path, Path]:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(root / "runtime", contract)
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    sink = store.scope(
+        request_id=request_id,
+        produced_by_event_id=produced_by_event_id,
+        runtime_lock=runtime.lock,
+    )
+    ref = sink.put(
+        kind="q-arbor.aggregate-metrics.v1",
+        media_type="application/json",
+        content=b'{"safe":true}',
+    )
+    namespace = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    scope_directory = store_root / "artifacts" / "evaluations" / namespace
+    scope_path = scope_directory / ".scope.json"
+    record_name = hashlib.sha256(ref.artifact_id.encode("utf-8")).hexdigest()
+    record_path = scope_directory / ".issued" / f"{record_name}.json"
+    return runtime, store, sink, ref, scope_path, record_path
+
+
+def _forbid_artifact_content_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[ArtifactRef]:
+    attempted: list[ArtifactRef] = []
+
+    def fail_before_content(
+        self: ContentAddressedArtifactStore,
+        ref: ArtifactRef,
+    ) -> bytes:
+        del self
+        attempted.append(ref)
+        raise AssertionError("artifact content was read before sidecar validation")
+
+    monkeypatch.setattr(
+        ContentAddressedArtifactStore, "read_bytes", fail_before_content
+    )
+    return attempted
+
+
+def _assert_bounded_boundary_failure(
+    action: Callable[[], None],
+    *,
+    timeout: float = 3.0,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+
+    def invoke() -> None:
+        try:
+            action()
+        except EvaluationBoundaryError as exc:
+            send.send(("error", type(exc).__module__, type(exc).__name__))
+        else:
+            send.send(("returned", "", ""))
+        finally:
+            send.close()
+
+    process = context.Process(target=invoke)
+    started = time.monotonic()
+    process.start()
+    send.close()
+    process.join(timeout)
+    elapsed = time.monotonic() - started
+    if process.is_alive():
+        process.terminate()
+        process.join(1.0)
+        receive.close()
+        pytest.fail(f"non-regular input blocked longer than {timeout:.1f}s")
+    assert process.exitcode == 0
+    assert receive.poll(0.1), "child exited without reporting a typed result"
+    outcome = receive.recv()
+    receive.close()
+    assert elapsed < timeout
+    assert outcome == (
+        "error",
+        "q_arbor.evaluation.errors",
+        "EvaluationBoundaryError",
+    )
+
+
+def _inode_snapshot(path: Path) -> tuple[int, int, int, int]:
+    result = path.lstat()
+    return (result.st_dev, result.st_ino, result.st_mode, result.st_nlink)
+
+
 def test_artifact_store_is_create_only_scoped_and_uses_hashed_request_namespace(
     tmp_path: Path,
 ) -> None:
@@ -618,9 +716,136 @@ def test_artifact_store_is_create_only_scoped_and_uses_hashed_request_namespace(
     store.verify_issued(
         ref,
         request_id=request_id,
-        runtime_lock_sha256=runtime.lock.sha256,
+        runtime_lock=runtime.lock,
     )
     assert store.read_bytes(ref) == b'{"metric":1}'
+
+
+def test_artifact_store_reopens_and_verifies_complete_scope_and_issuance(
+    tmp_path: Path,
+) -> None:
+    runtime, _, sink, ref, scope_path, record_path = _issued_artifact_fixture(
+        tmp_path,
+    )
+    store_root = tmp_path / "store"
+    scope_before = scope_path.read_bytes()
+    record_before = record_path.read_bytes()
+    ref_before = ref.to_json()
+    reopened = ContentAddressedArtifactStore.create(store_root)
+
+    reopened.verify_issued(
+        ref,
+        request_id="request.artifact",
+        runtime_lock=runtime.lock,
+    )
+
+    assert reopened.read_bytes(ref) == b'{"safe":true}'
+    assert scope_path.read_bytes() == scope_before
+    assert record_path.read_bytes() == record_before
+    assert ref.to_json() == ref_before
+    assert sink.issued_refs == (ref,)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "schema_version",
+        "additional_key",
+        "request_id",
+        "runtime_lock_sha256",
+        "config_sha256",
+        "allowed_artifacts",
+        "noncanonical_json",
+    ],
+)
+def test_verify_issued_rejects_every_scope_record_tamper_before_content_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    runtime, store, sink, ref, scope_path, record_path = _issued_artifact_fixture(
+        tmp_path,
+    )
+    outside = tmp_path / "outside-secret"
+    outside.write_bytes(b"OUTSIDE_SCOPE_CANARY")
+    mapping = json.loads(scope_path.read_bytes())
+    if tamper == "schema_version":
+        mapping["schema_version"] = "2.0"
+    elif tamper == "additional_key":
+        mapping["outside_path"] = str(outside)
+    elif tamper == "request_id":
+        mapping["request_id"] = "request.alternate"
+    elif tamper == "runtime_lock_sha256":
+        mapping["runtime_lock_sha256"] = (
+            "0" * 64 if mapping["runtime_lock_sha256"] != "0" * 64 else "1" * 64
+        )
+    elif tamper == "config_sha256":
+        mapping["config_sha256"] = (
+            "0" * 64 if mapping["config_sha256"] != "0" * 64 else "1" * 64
+        )
+    elif tamper == "allowed_artifacts":
+        mapping["allowed_artifacts"].append(
+            {
+                "kind": "q-arbor.secondary.v1",
+                "media_type": "application/json",
+            }
+        )
+    elif tamper != "noncanonical_json":  # pragma: no cover - closed parameters
+        raise AssertionError(f"unexpected tamper: {tamper}")
+    encoded = (
+        json.dumps(mapping, ensure_ascii=False, indent=2, sort_keys=True).encode(
+            "utf-8"
+        )
+        if tamper == "noncanonical_json"
+        else canonical_json(mapping).encode("utf-8")
+    )
+    scope_path.write_bytes(encoded)
+    artifact_path = tmp_path / "store" / Path(ref.relative_path)
+    tracked = (scope_path, record_path, artifact_path, outside)
+    before = tuple(path.read_bytes() for path in tracked)
+    ref_before = ref.to_json()
+
+    with monkeypatch.context() as scoped:
+        content_reads = _forbid_artifact_content_reads(scoped)
+        outside_reads: list[Path] = []
+        real_os_open = os.open
+        real_path_open = Path.open
+
+        def guarded_os_open(
+            path: str | bytes,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if (
+                dir_fd is None
+                and Path(os.fsdecode(path)).resolve() == outside.resolve()
+            ):
+                outside_reads.append(outside)
+                raise AssertionError("scope metadata triggered an outside read")
+            return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+        def guarded_path_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            if path.resolve() == outside.resolve():
+                outside_reads.append(outside)
+                raise AssertionError("scope metadata triggered an outside read")
+            return real_path_open(path, *args, **kwargs)
+
+        scoped.setattr(os, "open", guarded_os_open)
+        scoped.setattr(Path, "open", guarded_path_open)
+        with pytest.raises(EvaluationIntegrityError):
+            store.verify_issued(
+                ref,
+                request_id="request.artifact",
+                runtime_lock=runtime.lock,
+            )
+
+    assert content_reads == []
+    assert outside_reads == []
+    assert tuple(path.read_bytes() for path in tracked) == before
+    assert ref.to_json() == ref_before
+    assert sink.issued_refs == (ref,)
 
 
 @pytest.mark.parametrize(
@@ -677,7 +902,7 @@ def test_artifact_store_rejects_duplicate_tamper_and_unissued_preexisting_file(
         store.verify_issued(
             ref,
             request_id="request.artifact",
-            runtime_lock_sha256=runtime.lock.sha256,
+            runtime_lock=runtime.lock,
         )
 
     preexisting_path = root / "artifacts" / "evaluations" / "preexisting.json"
@@ -696,7 +921,7 @@ def test_artifact_store_rejects_duplicate_tamper_and_unissued_preexisting_file(
         store.verify_issued(
             preexisting,
             request_id="request.artifact",
-            runtime_lock_sha256=runtime.lock.sha256,
+            runtime_lock=runtime.lock,
         )
 
 
@@ -725,8 +950,65 @@ def test_artifact_store_rejects_post_issuance_symlink_swap(tmp_path: Path) -> No
         store.verify_issued(
             ref,
             request_id="request.artifact",
-            runtime_lock_sha256=runtime.lock.sha256,
+            runtime_lock=runtime.lock,
         )
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["candidate", "artifact", "scope_sidecar", "issued_sidecar"],
+)
+def test_nonregular_fifo_inputs_fail_fast_in_a_bounded_child(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    if target == "candidate":
+        root = tmp_path / "materialization"
+        root.mkdir()
+        fifo = root / "candidate.json"
+        os.mkfifo(fifo)
+        fifo_before = _inode_snapshot(fifo)
+
+        def action() -> None:
+            MaterializationReceipt.scan(root, ["candidate.json"])
+
+        _assert_bounded_boundary_failure(action)
+        assert _inode_snapshot(fifo) == fifo_before
+        assert stat.S_ISFIFO(fifo.lstat().st_mode)
+        return
+
+    runtime, store, sink, ref, scope_path, record_path = _issued_artifact_fixture(
+        tmp_path,
+    )
+    artifact_path = tmp_path / "store" / Path(ref.relative_path)
+    targets = {
+        "artifact": artifact_path,
+        "scope_sidecar": scope_path,
+        "issued_sidecar": record_path,
+    }
+    fifo = targets[target]
+    fifo.unlink()
+    os.mkfifo(fifo)
+    fifo_before = _inode_snapshot(fifo)
+    stable_paths = tuple(
+        path for path in (artifact_path, scope_path, record_path) if path != fifo
+    )
+    stable_before = tuple(path.read_bytes() for path in stable_paths)
+    ref_before = ref.to_json()
+
+    def action() -> None:
+        store.verify_issued(
+            ref,
+            request_id="request.artifact",
+            runtime_lock=runtime.lock,
+        )
+
+    _assert_bounded_boundary_failure(action)
+    assert _inode_snapshot(fifo) == fifo_before
+    assert stat.S_ISFIFO(fifo.lstat().st_mode)
+    assert tuple(path.read_bytes() for path in stable_paths) == stable_before
+    assert ref.to_json() == ref_before
+    assert sink.issued_refs == (ref,)
 
 
 def test_artifact_store_rejects_symlinked_artifacts_parent_before_external_write(
@@ -812,10 +1094,282 @@ def test_artifact_store_never_follows_a_swapped_issuance_record(
         store.verify_issued(
             ref,
             request_id="request.artifact",
-            runtime_lock_sha256=runtime.lock.sha256,
+            runtime_lock=runtime.lock,
         )
 
     assert outside.read_text(encoding="utf-8") == '{"forged":true}'
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["noncanonical_json", "produced_by_event_id"],
+)
+def test_verify_issued_rejects_raw_issuance_sidecar_tamper_before_content_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    runtime, store, sink, ref, scope_path, record_path = _issued_artifact_fixture(
+        tmp_path,
+    )
+    mapping = ref.to_dict()
+    if tamper == "produced_by_event_id":
+        mapping["produced_by_event_id"] = "event.forged"
+        encoded = canonical_json(mapping).encode("utf-8")
+    else:
+        encoded = json.dumps(
+            mapping,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+    record_path.write_bytes(encoded)
+    artifact_path = tmp_path / "store" / Path(ref.relative_path)
+    tracked = (scope_path, record_path, artifact_path)
+    before = tuple(path.read_bytes() for path in tracked)
+    ref_before = ref.to_json()
+
+    with monkeypatch.context() as scoped:
+        content_reads = _forbid_artifact_content_reads(scoped)
+        with pytest.raises(EvaluationIntegrityError):
+            store.verify_issued(
+                ref,
+                request_id="request.artifact",
+                runtime_lock=runtime.lock,
+            )
+
+    assert content_reads == []
+    assert tuple(path.read_bytes() for path in tracked) == before
+    assert ref.to_json() == ref_before
+    assert sink.issued_refs == (ref,)
+
+
+@pytest.mark.parametrize("tamper", ["alternate_path", "forged_artifact_id"])
+def test_verify_issued_rejects_joint_ref_and_issuance_identity_forgery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    runtime, store, sink, ref, scope_path, record_path = _issued_artifact_fixture(
+        tmp_path,
+    )
+    store_root = tmp_path / "store"
+    mapping = ref.to_dict()
+    if tamper == "alternate_path":
+        alternate_path = scope_path.parent / "alternate-content"
+        alternate_path.write_bytes(b'{"safe":true}')
+        mapping["relative_path"] = alternate_path.relative_to(store_root).as_posix()
+        forged_record_path = record_path
+    else:
+        mapping["artifact_id"] = (
+            f"artifact.{'0' * 64}"
+            if mapping["artifact_id"] != f"artifact.{'0' * 64}"
+            else f"artifact.{'1' * 64}"
+        )
+        record_name = hashlib.sha256(mapping["artifact_id"].encode("utf-8")).hexdigest()
+        forged_record_path = record_path.parent / f"{record_name}.json"
+    forged = ArtifactRef.from_mapping(mapping)
+    forged_record_path.write_bytes(canonical_json(forged.to_dict()).encode("utf-8"))
+    original_artifact = store_root / Path(ref.relative_path)
+    tracked = [scope_path, record_path, original_artifact, forged_record_path]
+    if tamper == "alternate_path":
+        tracked.append(store_root / Path(forged.relative_path))
+    unique_tracked = tuple(dict.fromkeys(tracked))
+    before = tuple(path.read_bytes() for path in unique_tracked)
+    forged_before = forged.to_json()
+
+    with monkeypatch.context() as scoped:
+        content_reads = _forbid_artifact_content_reads(scoped)
+        with pytest.raises(EvaluationIntegrityError):
+            store.verify_issued(
+                forged,
+                request_id="request.artifact",
+                runtime_lock=runtime.lock,
+            )
+
+    assert content_reads == []
+    assert tuple(path.read_bytes() for path in unique_tracked) == before
+    assert forged.to_json() == forged_before
+    assert sink.issued_refs == (ref,)
+
+
+def test_pending_issuance_recovery_strictly_validates_existing_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    store_root = tmp_path / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    sink = store.scope(
+        request_id="request.pending",
+        produced_by_event_id="event.pending",
+        runtime_lock=runtime.lock,
+    )
+    real_fsync = os.fsync
+    injected = False
+
+    def fail_committed_issuance_directory_sync(fd: int) -> None:
+        nonlocal injected
+        target = os.readlink(f"/proc/self/fd/{fd}")
+        if (
+            not injected
+            and stat.S_ISDIR(os.fstat(fd).st_mode)
+            and target.endswith("/.issued")
+        ):
+            injected = True
+            raise OSError("committed issuance directory sync fault")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_committed_issuance_directory_sync)
+    with pytest.raises(EvaluationPersistenceError) as caught:
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=b'{"pending":true}',
+        )
+    monkeypatch.setattr(os, "fsync", real_fsync)
+
+    namespace = hashlib.sha256(b"request.pending").hexdigest()
+    scope_directory = store_root / "artifacts" / "evaluations" / namespace
+    record_paths = tuple((scope_directory / ".issued").glob("*.json"))
+    artifact_paths = tuple(
+        path
+        for path in scope_directory.iterdir()
+        if path.is_file() and path.name != ".scope.json"
+    )
+    assert caught.value.committed is True
+    assert injected is True
+    assert len(record_paths) == 1
+    assert len(artifact_paths) == 1
+    assert sink.issued_refs == ()
+    record_mapping = json.loads(record_paths[0].read_bytes())
+    record_paths[0].write_bytes(
+        json.dumps(
+            record_mapping,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    tracked = (scope_directory / ".scope.json", *record_paths, *artifact_paths)
+    before = tuple(path.read_bytes() for path in tracked)
+
+    with pytest.raises(EvaluationIntegrityError):
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=b'{"pending":true}',
+        )
+
+    assert tuple(path.read_bytes() for path in tracked) == before
+    assert sink.issued_refs == ()
+
+
+@pytest.mark.parametrize("pending_state", ["content", "record"])
+def test_pending_recovery_fifo_fails_fast_in_a_bounded_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pending_state: str,
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    store_root = tmp_path / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    sink = store.scope(
+        request_id="request.pending.fifo",
+        produced_by_event_id="event.pending.fifo",
+        runtime_lock=runtime.lock,
+    )
+    content = b'{"pending_fifo":true}'
+    injected = False
+    if pending_state == "content":
+        real_open = os.open
+
+        def fail_issuance_record_create(
+            path: str | bytes,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            nonlocal injected
+            name = os.fsdecode(path)
+            if (
+                not injected
+                and dir_fd is not None
+                and flags & os.O_CREAT
+                and flags & os.O_EXCL
+                and name.endswith(".json")
+                and os.readlink(f"/proc/self/fd/{dir_fd}").endswith("/.issued")
+            ):
+                injected = True
+                raise OSError("uncommitted issuance-record create fault")
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(os, "open", fail_issuance_record_create)
+    else:
+        real_fsync = os.fsync
+
+        def fail_issuance_directory_sync(fd: int) -> None:
+            nonlocal injected
+            target = os.readlink(f"/proc/self/fd/{fd}")
+            if (
+                not injected
+                and stat.S_ISDIR(os.fstat(fd).st_mode)
+                and target.endswith("/.issued")
+            ):
+                injected = True
+                raise OSError("committed issuance-record sync fault")
+            real_fsync(fd)
+
+        monkeypatch.setattr(os, "fsync", fail_issuance_directory_sync)
+
+    with pytest.raises(EvaluationPersistenceError) as caught:
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+    if pending_state == "content":
+        monkeypatch.setattr(os, "open", real_open)
+    else:
+        monkeypatch.setattr(os, "fsync", real_fsync)
+
+    namespace = hashlib.sha256(b"request.pending.fifo").hexdigest()
+    scope_directory = store_root / "artifacts" / "evaluations" / namespace
+    scope_path = scope_directory / ".scope.json"
+    artifact_paths = tuple(
+        path
+        for path in scope_directory.iterdir()
+        if path.is_file() and path.name != ".scope.json"
+    )
+    record_paths = tuple((scope_directory / ".issued").glob("*.json"))
+    assert injected is True
+    assert caught.value.committed is (pending_state == "record")
+    assert len(artifact_paths) == 1
+    assert len(record_paths) == (1 if pending_state == "record" else 0)
+    target = artifact_paths[0] if pending_state == "content" else record_paths[0]
+    stable_paths = (
+        (scope_path,) if pending_state == "content" else (scope_path, artifact_paths[0])
+    )
+    stable_before = tuple(path.read_bytes() for path in stable_paths)
+    target.unlink()
+    os.mkfifo(target)
+    fifo_before = _inode_snapshot(target)
+
+    def action() -> None:
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+
+    _assert_bounded_boundary_failure(action)
+    assert _inode_snapshot(target) == fifo_before
+    assert stat.S_ISFIFO(target.lstat().st_mode)
+    assert tuple(path.read_bytes() for path in stable_paths) == stable_before
+    assert sink.issued_refs == ()
 
 
 @pytest.mark.parametrize(
