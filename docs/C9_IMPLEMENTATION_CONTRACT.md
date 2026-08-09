@@ -436,6 +436,14 @@ hash equality, then verifies its create-only issuance record, request namespace,
 containment, regular-file state, allowed `(kind, media_type)` pairs, and current digest. A merely pre-existing file
 inside the root is not issued. Duplicate ID/path is rejected.
 
+The request-scope sidecar layout is frozen for recovery and boundary tests:
+`.scope.json` is the canonical create-only scope/runtime-lock record, and
+`.issued/<sha256(artifact_id UTF-8)>.json` is the canonical create-only
+ArtifactRef record. Both live below the hashed request directory and are opened
+through the same anchored no-follow directory chain as artifact content; an
+existing symlink/non-regular sidecar or parent fails before any external read or
+write.
+
 ## 6. Provenance and status invariants
 
 Every status has complete C6 provenance. Denied expected identities do not mean
