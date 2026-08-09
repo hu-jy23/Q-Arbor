@@ -117,6 +117,18 @@ class ArtifactRef(_ImmutableJSON):
         return cast(str, self._get("artifact_id"))
 
     @property
+    def sha256(self) -> str:
+        """Return the digest of the referenced payload bytes."""
+
+        return cast(str, self._get("sha256"))
+
+    @property
+    def canonical_sha256(self) -> str:
+        """Return the digest of this complete canonical ArtifactRef."""
+
+        return cast(str, self._sha256)
+
+    @property
     def kind(self) -> str:
         return cast(str, self._get("kind"))
 
@@ -255,7 +267,7 @@ class EvaluationFailure(_ImmutableJSON):
 class FamilyEvidence(_ImmutableJSON):
     """Non-authoritative exact-family evidence emitted by validation."""
 
-    _KEYS = {"family_hint", "method", "evidence_sha256"}
+    _KEYS = frozenset({"family_hint", "method", "evidence_sha256"})
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> FamilyEvidence:
@@ -285,7 +297,7 @@ class FamilyEvidence(_ImmutableJSON):
 class FoldPolicy(_ImmutableJSON):
     """Closed runtime fold policy decoded from evaluator configuration."""
 
-    _KEYS = {"mode", "expected_fold_ids", "required_metric_names"}
+    _KEYS = frozenset({"mode", "expected_fold_ids", "required_metric_names"})
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> FoldPolicy:
