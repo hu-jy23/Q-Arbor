@@ -542,7 +542,7 @@ def test_runtime_config_requires_strict_canonical_json(tmp_path: Path) -> None:
                     }
                 ]
             ),
-            EvaluationInvariantError,
+            EvaluationSchemaError,
         ),
         (
             lambda value: value["policy"].update(
@@ -821,7 +821,7 @@ def test_artifact_store_never_follows_a_swapped_issuance_record(
 @pytest.mark.parametrize(
     ("identifier", "expected_error"),
     [
-        ("identifier\n", EvaluationInvariantError),
+        ("identifier\n", EvaluationSchemaError),
         ("a" * 161, EvaluationSchemaError),
         ("contains space", EvaluationSchemaError),
         ("/absolute", EvaluationSchemaError),
@@ -847,8 +847,8 @@ def test_plugin_identity_fullmatches_hashes_and_identifier(tmp_path: Path) -> No
     from q_arbor.evaluation import PluginIdentity
 
     for field, value, expected_error in (
-        ("name", "plugin\n", EvaluationInvariantError),
-        ("code_sha256", "a" * 64 + "\n", EvaluationInvariantError),
+        ("name", "plugin\n", EvaluationSchemaError),
+        ("code_sha256", "a" * 64 + "\n", EvaluationSchemaError),
         ("code_sha256", "A" * 64, EvaluationSchemaError),
     ):
         mapping = plugin_identity_mapping()

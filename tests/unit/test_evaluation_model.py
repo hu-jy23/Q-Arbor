@@ -71,7 +71,7 @@ def test_reason_code_is_closed_ascii_and_hashable() -> None:
         "x" * 129,
         "secret=value",
     ):
-        with pytest.raises(EvaluationInvariantError):
+        with pytest.raises(EvaluationSchemaError):
             ReasonCode.parse(invalid)
 
 
@@ -136,11 +136,11 @@ def test_mapping_value_constructors_are_canonical_detached_and_hashable() -> Non
     ],
 )
 def test_check_failure_and_warning_text_are_closed_reason_codes(unsafe: str) -> None:
-    with pytest.raises(EvaluationInvariantError):
+    with pytest.raises(EvaluationSchemaError):
         CheckResult.from_mapping(
             {"name": "check.safe", "status": "fail", "evidence": unsafe}
         )
-    with pytest.raises(EvaluationInvariantError):
+    with pytest.raises(EvaluationSchemaError):
         EvaluationFailure.from_mapping(
             {
                 "failure_type": "evaluation_failure",

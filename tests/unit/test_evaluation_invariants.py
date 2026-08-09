@@ -581,7 +581,6 @@ def test_metric_and_constraint_declarations_are_exact(
         lambda value: value["fold_metrics"].append(
             copy.deepcopy(value["fold_metrics"][0])
         ),
-        lambda value: value.update(fold_metrics=list(reversed(value["fold_metrics"]))),
         lambda value: value["fold_metrics"][0].update(
             time_range="2020-12-31/2020-01-01"
         ),
@@ -600,6 +599,22 @@ def test_fold_identity_order_range_and_metrics_are_exact(
 
     with pytest.raises(EvaluationInvariantError):
         freeze_evaluation_result(mapping, binding=case.binding)
+
+
+def test_fold_freeze_normalizes_order_while_validate_rejects_it(
+    tmp_path: Path,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    mapping = case.result.to_dict()
+    mapping["fold_metrics"] = list(reversed(mapping["fold_metrics"]))
+
+    frozen = freeze_evaluation_result(mapping, binding=case.binding)
+
+    assert [fold["fold_id"] for fold in frozen.fold_metrics] == list(
+        case.runtime.lock.policy["fold_policy"]["expected_fold_ids"]
+    )
+    with pytest.raises(EvaluationInvariantError):
+        validate_evaluation_result(mapping, binding=case.binding)
 
 
 @pytest.mark.parametrize(
