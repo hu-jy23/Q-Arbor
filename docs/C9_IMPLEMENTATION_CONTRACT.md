@@ -359,8 +359,23 @@ and an ArtifactResolver. It is an identity bundle, never an authorization token.
 Result-ID uniqueness is local to a binding in C9; C10 makes it durable.
 Every `freeze_evaluation_result`, `validate_evaluation_result`, and
 `load_evaluation_result` call first invokes `binding.runtime_lock.verify()`.
-Pre-existing drift raises `EvaluationIntegrityError`; controlled execution that
-first observes drift after a call emits `contaminated/contamination`.
+Pre-existing drift raises `EvaluationIntegrityError`. Each concrete C9 plugin
+verifies immediately before its mock computation. Its concrete
+`AuthorizedSplit.make_result` verifies again immediately before freezing the
+proposed result and once more before returning it. A failure in either of those
+post-computation checks discards every proposed metric, fold, statistic, and
+artifact and emits `contaminated/contamination`.
+
+That terminal value is built only through the package-private
+`_freeze_controlled_evaluation_result(mapping, *, binding,
+runtime_drift_observed=True)` seam. It skips the now-impossible live runtime
+reverification, but accepts only the exact contaminated minimal-result template
+below, revalidates every frozen request/contract/plugin/candidate/provenance
+identity against the already verified binding, and rejects non-null metrics,
+folds, statistics, artifacts, warnings, or a failure other than
+`contamination`. The helper is not exported from `q_arbor.evaluation`; callers
+cannot use it to turn pre-execution drift or an arbitrary integrity error into a
+result.
 
 ### Resource and artifact protocols
 
