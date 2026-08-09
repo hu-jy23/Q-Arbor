@@ -60,6 +60,7 @@ _VALIDATION_STATUSES: Final = {
     "invalid_candidate",
     "implementation_failure",
 }
+_OPEN_SUPPORTS_DIR_FD: Final = os.open in os.supports_dir_fd
 
 
 def _contract_snapshot(contract: QuantResearchContract) -> dict[str, JSONValue]:
@@ -107,20 +108,37 @@ def _identity_tuple(result: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _readonly_nofollow_flags(*, directory: bool = False) -> int:
+    """Return the fail-fast flags required for an anchored read."""
+
+    required = ("O_NOFOLLOW", "O_NONBLOCK", "O_CLOEXEC")
+    if not _OPEN_SUPPORTS_DIR_FD or any(not hasattr(os, name) for name in required):
+        raise EvaluationBoundaryError("platform lacks fail-fast file primitives")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    if directory:
+        if not hasattr(os, "O_DIRECTORY"):
+            raise EvaluationBoundaryError("platform lacks directory-open protection")
+        flags |= os.O_DIRECTORY
+    return flags
+
+
 def _open_regular_beneath(root_fd: int, relative_path: str) -> int:
-    if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
-        raise EvaluationBoundaryError("platform lacks a no-follow file primitive")
+    directory_flags = _readonly_nofollow_flags(directory=True)
+    final_flags = _readonly_nofollow_flags()
     current_fd = os.dup(root_fd)
     try:
         components = relative_path.split("/")
         for component in components[:-1]:
-            flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
-            next_fd = os.open(component, flags, dir_fd=current_fd)
+            next_fd = os.open(
+                component,
+                directory_flags,
+                dir_fd=current_fd,
+            )
             os.close(current_fd)
             current_fd = next_fd
         final_fd = os.open(
             components[-1],
-            os.O_RDONLY | os.O_NOFOLLOW,
+            final_flags,
             dir_fd=current_fd,
         )
         os.close(current_fd)
@@ -171,13 +189,8 @@ class MaterializationReceipt(_ImmutableJSON):
         ]
 
         root_path = Path(root)
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        else:
-            raise EvaluationBoundaryError("platform lacks root no-follow support")
         try:
-            root_fd = os.open(root_path, flags)
+            root_fd = os.open(root_path, _readonly_nofollow_flags(directory=True))
         except OSError as exc:
             if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
                 raise EvaluationBoundaryError(

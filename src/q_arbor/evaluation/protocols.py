@@ -9,7 +9,7 @@ from q_arbor.contracts import QuantResearchContract
 
 from .candidate import CandidateArtifact, CandidateValidation, ValidatedCandidate
 from .results import EvaluationResult, EvaluationSummary
-from .runtime import EvaluationBinding, EvaluationRequest
+from .runtime import EvaluationBinding, EvaluationRequest, VerifiedRuntimeLock
 from .values import (
     ArtifactRef,
     CheckResult,
@@ -43,7 +43,7 @@ class ArtifactResolver(Protocol):
         ref: ArtifactRef,
         *,
         request_id: str,
-        runtime_lock_sha256: str,
+        runtime_lock: VerifiedRuntimeLock,
     ) -> None: ...
 
 

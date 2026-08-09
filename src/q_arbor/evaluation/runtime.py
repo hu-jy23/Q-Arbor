@@ -12,7 +12,13 @@ from typing import Any, Final, cast
 
 from q_arbor.contracts import QuantResearchContract
 
-from .candidate import CandidateReceipt, _contract_snapshot, _plugin_matches_contract
+from .candidate import (
+    CandidateReceipt,
+    _OPEN_SUPPORTS_DIR_FD,
+    _contract_snapshot,
+    _plugin_matches_contract,
+    _readonly_nofollow_flags,
+)
 from .codec import (
     FrozenJSON,
     JSONValue,
@@ -29,6 +35,7 @@ from .codec import (
 )
 from .errors import (
     EvaluationBoundaryError,
+    EvaluationDecodeError,
     EvaluationIntegrityError,
     EvaluationInvariantError,
     EvaluationPersistenceError,
@@ -573,9 +580,17 @@ class EvaluationBinding:
 
 
 def _directory_flags() -> int:
-    if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
-        raise EvaluationBoundaryError("platform lacks no-follow store support")
-    return os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+    return _readonly_nofollow_flags(directory=True)
+
+
+def _exclusive_create_flags() -> int:
+    if (
+        not _OPEN_SUPPORTS_DIR_FD
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_CLOEXEC")
+    ):
+        raise EvaluationBoundaryError("platform lacks safe create-only primitives")
+    return os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 def _open_or_create_store_root(root: str | os.PathLike[str]) -> int:
@@ -636,22 +651,22 @@ def _open_or_create_store_root(root: str | os.PathLike[str]) -> int:
 
 
 def _open_beneath(root_fd: int, relative_path: str) -> int:
-    if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
-        raise EvaluationBoundaryError("platform lacks no-follow artifact reads")
+    directory_flags = _directory_flags()
+    final_flags = _readonly_nofollow_flags()
     current_fd = os.dup(root_fd)
     try:
         components = relative_path.split("/")
         for component in components[:-1]:
             next_fd = os.open(
                 component,
-                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0),
+                directory_flags,
                 dir_fd=current_fd,
             )
             os.close(current_fd)
             current_fd = next_fd
         result = os.open(
             components[-1],
-            os.O_RDONLY | os.O_NOFOLLOW,
+            final_flags,
             dir_fd=current_fd,
         )
         os.close(current_fd)
@@ -670,31 +685,87 @@ def _open_beneath(root_fd: int, relative_path: str) -> int:
 
 
 def _read_regular_fd(fd: int) -> bytes:
-    before = os.fstat(fd)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-        raise EvaluationBoundaryError("artifact must be one singly-linked regular file")
     chunks: list[bytes] = []
     try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise EvaluationBoundaryError(
+                "artifact must be one singly-linked regular file"
+            )
         while chunk := os.read(fd, 1024 * 1024):
             chunks.append(chunk)
         after = os.fstat(fd)
+    except EvaluationBoundaryError:
+        raise
     except OSError as exc:
         raise EvaluationPersistenceError(
             "unable to read artifact",
             committed=False,
         ) from exc
-    identity = lambda value: (
-        value.st_dev,
-        value.st_ino,
-        value.st_mode,
-        value.st_nlink,
-        value.st_size,
-        value.st_mtime_ns,
-        value.st_ctime_ns,
-    )
+
+    def identity(value: os.stat_result) -> tuple[int, ...]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_nlink,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
     if identity(before) != identity(after):
         raise EvaluationBoundaryError("artifact changed while it was read")
     return b"".join(chunks)
+
+
+def _scope_record(
+    request_id: str,
+    runtime_lock: VerifiedRuntimeLock,
+) -> dict[str, JSONValue]:
+    return {
+        "schema_version": "1.0",
+        "request_id": request_id,
+        "runtime_lock_sha256": runtime_lock.sha256,
+        "config_sha256": runtime_lock.config_sha256,
+        "allowed_artifacts": [
+            {"kind": kind, "media_type": media_type}
+            for kind, media_type in runtime_lock.allowed_artifacts
+        ],
+    }
+
+
+def _issued_record_expectation(
+    ref: ArtifactRef,
+    *,
+    request_id: str,
+) -> tuple[str, str, str, bytes]:
+    """Derive the only valid request-scoped identity for an issued artifact."""
+
+    request_digest = sha256(request_id.encode("utf-8")).hexdigest()
+    relative_directory = f"artifacts/evaluations/{request_digest}"
+    identity_digest = sha256(
+        canonical_normalized_bytes(
+            {
+                "kind": ref.kind,
+                "media_type": ref.media_type,
+                "sha256": ref.sha256,
+            }
+        )
+    ).hexdigest()
+    expected_artifact_id = f"artifact.{identity_digest}"
+    expected_relative_path = f"{relative_directory}/{identity_digest}"
+    if ref.artifact_id != expected_artifact_id:
+        raise EvaluationIntegrityError("artifact ID is not content-addressed")
+    if ref.relative_path != expected_relative_path:
+        raise EvaluationIntegrityError("artifact path is not request-scoped")
+    record_name = sha256(expected_artifact_id.encode("utf-8")).hexdigest() + ".json"
+    return (
+        relative_directory,
+        identity_digest,
+        record_name,
+        canonical_normalized_bytes(ref.to_dict()),
+    )
 
 
 class ContentAddressedArtifactStore:
@@ -764,16 +835,7 @@ class ContentAddressedArtifactStore:
             relative_directory,
         )
 
-        record: dict[str, JSONValue] = {
-            "schema_version": "1.0",
-            "request_id": request_id,
-            "runtime_lock_sha256": runtime_lock.sha256,
-            "config_sha256": runtime_lock.config_sha256,
-            "allowed_artifacts": [
-                {"kind": kind, "media_type": media_type}
-                for kind, media_type in runtime_lock.allowed_artifacts
-            ],
-        }
+        record = _scope_record(request_id, runtime_lock)
         expected = canonical_normalized_bytes(record)
         try:
             _create_or_verify_immutable_file_at(
@@ -798,48 +860,47 @@ class ContentAddressedArtifactStore:
         ref: ArtifactRef,
         *,
         request_id: str,
-        runtime_lock_sha256: str,
+        runtime_lock: VerifiedRuntimeLock,
     ) -> None:
         require_identifier(request_id, "issued artifact request_id")
-        require_sha256(runtime_lock_sha256, "issued artifact runtime lock hash")
         if not isinstance(ref, ArtifactRef):
             raise EvaluationSchemaError("issued artifact must be an ArtifactRef")
-        request_digest = sha256(request_id.encode("utf-8")).hexdigest()
-        prefix = f"artifacts/evaluations/{request_digest}/"
-        if not ref.relative_path.startswith(prefix):
-            raise EvaluationIntegrityError("artifact request namespace differs")
-        directory_fd = _open_beneath_directory(self._root_fd, prefix.rstrip("/"))
+        if not isinstance(runtime_lock, VerifiedRuntimeLock):
+            raise EvaluationSchemaError("issued artifact needs a verified runtime lock")
+        # C5 G02/G05, C6 J04, C9 §5: disk sidecars cannot attest their own policy.
+        runtime_lock.verify()
+        expected_scope = canonical_normalized_bytes(
+            _scope_record(request_id, runtime_lock)
+        )
+        (
+            relative_directory,
+            _identity_digest,
+            record_name,
+            expected_record,
+        ) = _issued_record_expectation(ref, request_id=request_id)
+        directory_fd = _open_beneath_directory(
+            self._root_fd,
+            relative_directory,
+        )
         try:
-            scope_mapping = _read_json_object_at(directory_fd, ".scope.json")
+            _read_json_object_at(
+                directory_fd,
+                ".scope.json",
+                expected_bytes=expected_scope,
+            )
+            if (ref.kind, ref.media_type) not in set(runtime_lock.allowed_artifacts):
+                raise EvaluationBoundaryError("artifact kind/media pair is not allowed")
             issued_fd = _open_beneath_directory(directory_fd, ".issued")
             try:
-                record_name = (
-                    sha256(ref.artifact_id.encode("utf-8")).hexdigest() + ".json"
+                _read_json_object_at(
+                    issued_fd,
+                    record_name,
+                    expected_bytes=expected_record,
                 )
-                record = _read_json_object_at(issued_fd, record_name)
             finally:
                 os.close(issued_fd)
         finally:
             os.close(directory_fd)
-        if scope_mapping.get("request_id") != request_id:
-            raise EvaluationIntegrityError("artifact scope request identity differs")
-        if scope_mapping.get("runtime_lock_sha256") != runtime_lock_sha256:
-            raise EvaluationIntegrityError("artifact scope runtime lock differs")
-        try:
-            allowed = {
-                (item["kind"], item["media_type"])
-                for item in cast(
-                    list[dict[str, Any]], scope_mapping["allowed_artifacts"]
-                )
-            }
-        except (KeyError, TypeError) as exc:
-            raise EvaluationIntegrityError(
-                "artifact scope record is malformed"
-            ) from exc
-        if (ref.kind, ref.media_type) not in allowed:
-            raise EvaluationBoundaryError("artifact kind/media pair is not allowed")
-        if record != ref.to_dict():
-            raise EvaluationIntegrityError("artifact issuance record differs from ref")
         self.verify(ref)
 
     def __del__(self) -> None:
@@ -852,12 +913,13 @@ class ContentAddressedArtifactStore:
 
 
 def _open_beneath_directory(root_fd: int, relative_path: str) -> int:
+    directory_flags = _directory_flags()
     current_fd = os.dup(root_fd)
     try:
         for component in relative_path.split("/"):
             next_fd = os.open(
                 component,
-                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0),
+                directory_flags,
                 dir_fd=current_fd,
             )
             os.close(current_fd)
@@ -874,13 +936,14 @@ def _open_beneath_directory(root_fd: int, relative_path: str) -> int:
 def _ensure_beneath_directory(root_fd: int, relative_path: str) -> int:
     """Create missing directories from one held root descriptor."""
 
+    directory_flags = _directory_flags()
     current_fd = os.dup(root_fd)
     try:
         for component in relative_path.split("/"):
             try:
                 next_fd = os.open(
                     component,
-                    _directory_flags(),
+                    directory_flags,
                     dir_fd=current_fd,
                 )
             except FileNotFoundError:
@@ -888,7 +951,7 @@ def _ensure_beneath_directory(root_fd: int, relative_path: str) -> int:
                     os.mkdir(component, mode=0o700, dir_fd=current_fd)
                     next_fd = os.open(
                         component,
-                        _directory_flags(),
+                        directory_flags,
                         dir_fd=current_fd,
                     )
                 except OSError as exc:
@@ -916,9 +979,14 @@ def _ensure_beneath_directory(root_fd: int, relative_path: str) -> int:
         raise
 
 
-def _read_json_object_at(directory_fd: int, name: str) -> dict[str, Any]:
+def _read_json_object_at(
+    directory_fd: int,
+    name: str,
+    *,
+    expected_bytes: bytes | None = None,
+) -> dict[str, Any]:
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        fd = os.open(name, _readonly_nofollow_flags(), dir_fd=directory_fd)
     except OSError as exc:
         if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
             raise EvaluationBoundaryError("store record is a symlink") from exc
@@ -927,11 +995,19 @@ def _read_json_object_at(directory_fd: int, name: str) -> dict[str, Any]:
             committed=False,
         ) from exc
     try:
-        decoded = decode_json_bytes(_read_regular_fd(fd))
+        raw = _read_regular_fd(fd)
     finally:
         os.close(fd)
+    try:
+        decoded = decode_json_bytes(raw)
+    except EvaluationDecodeError as exc:
+        raise EvaluationIntegrityError("store record is malformed") from exc
     if not isinstance(decoded, dict):
         raise EvaluationIntegrityError("store record root is not an object")
+    if canonical_normalized_bytes(decoded) != raw:
+        raise EvaluationIntegrityError("store record bytes are not canonical")
+    if expected_bytes is not None and raw != expected_bytes:
+        raise EvaluationIntegrityError("store record differs from trusted identity")
     return decoded
 
 
@@ -942,7 +1018,7 @@ def _create_or_verify_immutable_file_at(
     *,
     allow_existing: bool = True,
 ) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    flags = _exclusive_create_flags()
     try:
         fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
     except FileExistsError:
@@ -951,7 +1027,7 @@ def _create_or_verify_immutable_file_at(
         try:
             existing_fd = os.open(
                 name,
-                os.O_RDONLY | os.O_NOFOLLOW,
+                _readonly_nofollow_flags(),
                 dir_fd=directory_fd,
             )
             try:
@@ -1020,7 +1096,7 @@ def _create_exclusive_file_at(
     try:
         fd = os.open(
             name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            _exclusive_create_flags(),
             0o600,
             dir_fd=directory_fd,
         )
@@ -1030,7 +1106,7 @@ def _create_exclusive_file_at(
         try:
             existing_fd = os.open(
                 name,
-                os.O_RDONLY | os.O_NOFOLLOW,
+                _readonly_nofollow_flags(),
                 dir_fd=directory_fd,
             )
             try:
@@ -1090,7 +1166,7 @@ def _create_exclusive_file_at(
 
 def _record_exists_at(directory_fd: int, name: str) -> bool:
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        fd = os.open(name, _readonly_nofollow_flags(), dir_fd=directory_fd)
     except FileNotFoundError:
         return False
     except OSError as exc:
@@ -1174,6 +1250,17 @@ class _ScopedArtifactSink:
                 "produced_by_event_id": self._produced_by_event_id,
             }
         )
+        (
+            expected_directory,
+            expected_identity_digest,
+            record_name,
+            expected_record,
+        ) = _issued_record_expectation(ref, request_id=self._request_id)
+        if (
+            expected_directory != self._relative_directory
+            or expected_identity_digest != identity_digest
+        ):
+            raise EvaluationIntegrityError("artifact issuance identity drifted")
         directory_fd = _open_beneath_directory(
             self._store._root_fd,
             self._relative_directory,
@@ -1181,17 +1268,16 @@ class _ScopedArtifactSink:
         try:
             issued_fd = _open_beneath_directory(directory_fd, ".issued")
             try:
-                record_name = sha256(artifact_id.encode("utf-8")).hexdigest() + ".json"
                 pending_state = self._pending_states.get(identity_digest)
                 record_exists = _record_exists_at(issued_fd, record_name)
                 if record_exists:
                     if pending_state != "issued":
                         raise EvaluationBoundaryError("artifact ID/path already issued")
-                    record = _read_json_object_at(issued_fd, record_name)
-                    if record != ref.to_dict():
-                        raise EvaluationIntegrityError(
-                            "pending issuance record differs from artifact"
-                        )
+                    _read_json_object_at(
+                        issued_fd,
+                        record_name,
+                        expected_bytes=expected_record,
+                    )
                     _create_exclusive_file_at(
                         directory_fd,
                         identity_digest,
@@ -1218,7 +1304,7 @@ class _ScopedArtifactSink:
                         _create_or_verify_immutable_file_at(
                             issued_fd,
                             record_name,
-                            canonical_normalized_bytes(ref.to_dict()),
+                            expected_record,
                             allow_existing=False,
                         )
                     except EvaluationPersistenceError as exc:

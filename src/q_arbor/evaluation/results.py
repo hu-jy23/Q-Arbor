@@ -682,7 +682,7 @@ def _validate_result_mapping(
             binding.artifact_resolver.verify_issued(
                 artifact,
                 request_id=binding.request.request_id,
-                runtime_lock_sha256=binding.runtime_lock.sha256,
+                runtime_lock=binding.runtime_lock,
             )
 
     provenance = cast(dict[str, JSONValue], normalized["provenance"])
