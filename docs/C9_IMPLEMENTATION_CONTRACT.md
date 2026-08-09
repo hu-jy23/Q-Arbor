@@ -271,6 +271,24 @@ hash, and changed paths. This prevents receipt replay across contracts/plugins.
 `invalid_candidate`. `implementation_failure` requires the same failure type;
 a previously computed canonical hash may remain, but cannot make it valid.
 
+The three C9 adapters freeze one shared surface check in addition to their
+domain checks.  After the lexical ordering required by Section 2, the exact
+check-name sets are:
+
+- synthetic: `candidate.kind`, `candidate.surface`, `synthetic.payload`;
+- HM1: `candidate.kind`, `candidate.surface`, `hm1.ast`;
+- formula alpha: `candidate.kind`, `candidate.surface`,
+  `formula.expression`, `formula.public_schema`.
+
+`candidate.surface` is `pass/candidate.surface.ok` exactly when the changed
+paths and required outputs satisfy Section 3.  Otherwise it is `fail` and its
+evidence is exactly one of `candidate.surface.protected`,
+`candidate.surface.outside_editable`, or `candidate.surface.missing_output`.
+When surface and domain checks both fail, the surface ReasonCode is the
+deterministic failure summary; every failed check remains present in the
+receipt.  The common receipt freezer independently repeats the surface check,
+so a plugin cannot convert an invalid surface into a valid receipt.
+
 The canonical payload deliberately omits its own ArtifactRef. The host writes it
 below `artifacts/validations/`; the receipt ref kind is
 `q-arbor.validation-receipt.v1` and its hash equals validation `.sha256`.
