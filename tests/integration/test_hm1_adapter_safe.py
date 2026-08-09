@@ -16,7 +16,7 @@ from q_arbor.evaluation import (
     EvaluationSchemaError,
     QuantTaskPlugin,
 )
-from q_arbor.plugins.hm1 import HM1EngineOutput, HM1FuturesPlugin
+from q_arbor.plugins.hm1 import HM1EngineOutput, HM1FuturesPlugin, HM1SplitData
 from q_arbor.plugins.hm1.testing import make_hm1_mock_development_split
 from tests.evaluation_helpers import (
     bind_validation,
@@ -333,6 +333,55 @@ def test_hm1_untrusted_failure_detail_is_sanitized_everywhere(
     assert SECRET_CANARY not in tree_bytes
     assert "/restricted/source/raw" not in observable
     assert "/restricted/source/raw" not in tree_bytes
+
+
+@pytest.mark.parametrize("fatal_error", [KeyboardInterrupt, SystemExit])
+def test_hm1_fatal_base_exceptions_are_never_converted_to_a_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fatal_error: type[BaseException],
+) -> None:
+    root = tmp_path / fatal_error.__name__
+    identity = hm1_identity()
+    plugin = HM1FuturesPlugin.create(identity)
+    contract = hm1_contract(identity)
+    candidate = materialize_candidate(
+        root / "candidate",
+        contract,
+        fixture_bytes("hm1_valid_strategy.py"),
+    )
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root,
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    request = make_request(contract, receipt)
+    runtime = runtime_fixture(root, contract, aggregate_only=True)
+    store = ContentAddressedArtifactStore.create(root / "store")
+    output = HM1EngineOutput.from_mapping(hm1_engine_mapping("incomparable"))
+    split = make_hm1_mock_development_split(
+        request,
+        contract,
+        receipt,
+        plugin,
+        runtime.lock,
+        result_id=f"result.hm1.{fatal_error.__name__.lower()}",
+        evaluation_seed=7,
+        artifact_store=store,
+        produced_by_event_id=f"event.hm1.{fatal_error.__name__.lower()}",
+        engine_output=output,
+    )
+
+    def raise_fatal(_self: HM1SplitData) -> HM1EngineOutput:
+        raise fatal_error("qualification fatal control signal")
+
+    monkeypatch.setattr(HM1SplitData, "read_engine_output", raise_fatal)
+
+    with pytest.raises(fatal_error):
+        plugin.evaluate(receipt, split)
 
 
 def test_hm1_mock_evaluation_uses_no_environment_network_or_subprocess(
