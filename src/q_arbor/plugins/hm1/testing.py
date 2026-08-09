@@ -28,7 +28,12 @@ from q_arbor.evaluation import (
 )
 from q_arbor.evaluation.results import _freeze_controlled_evaluation_result
 
-from . import HM1EngineOutput, HM1FuturesPlugin, HM1SplitData
+from . import (
+    HM1EngineOutput,
+    HM1FuturesPlugin,
+    HM1SplitData,
+    _require_hm1_mock_contract,
+)
 
 
 def _typed_values(
@@ -308,9 +313,10 @@ def make_hm1_mock_development_split(
     ):
         raise EvaluationSchemaError("HM1 mock factory input type mismatch")
     mapping = contract.to_dict()
-    development = mapping["data"]["splits"]["development"]
     if mapping["task_kind"] != "futures_strategy":
         raise EvaluationIntegrityError("HM1 contract task kind mismatch")
+    _require_hm1_mock_contract(mapping)
+    development = mapping["data"]["splits"]["development"]
     fold_policy = runtime_lock.fold_policy
     if (
         fold_policy.mode != "aggregate_only"

@@ -186,6 +186,17 @@ def hm1_contract(identity: PluginIdentity | None = None) -> QuantResearchContrac
         ],
         "admission_rule": "C9 HM1 results are incomparable until cost semantics exist",
     }
+    draft["cost_model"] = {
+        "model_id": "hm1.cost.unavailable.v1",
+        "sha256": "437ffc85b60e22acdeb71ecd08472a1de9436fa3707964113e264ccb3301604c",
+        "components": [
+            {
+                "name": "transaction_cost",
+                "rule": "unavailable in C9 HM1 mock",
+            }
+        ],
+        "currency": "not_applicable",
+    }
     return freeze_contract(draft)
 
 

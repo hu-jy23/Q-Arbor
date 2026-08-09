@@ -104,6 +104,76 @@ def _canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
+_HM1_COST_SEMANTICS_SHA256: Final = hashlib.sha256(
+    _canonical_json(
+        {
+            "kind": "hm1_cost_semantics",
+            "schema_version": "1.0",
+            "status": "unavailable",
+        }
+    )
+).hexdigest()
+_HM1_SUPPORTED_DOMAIN_BYTES: Final = _canonical_json(
+    {
+        "metrics": {
+            "primary": {
+                "name": "portfolio_daily_sharpe",
+                "direction": "maximize",
+                "unit": "ratio",
+                "aggregation": "aggregate_only",
+            },
+            "hard_constraints": [],
+            "diagnostics": [
+                {
+                    "name": name,
+                    "direction": direction,
+                    "unit": unit,
+                    "aggregation": "aggregate_only",
+                }
+                for name, direction, unit in (
+                    ("annualized_return", "maximize", "fraction"),
+                    ("max_drawdown", "minimize", "fraction"),
+                    ("calmar", "maximize", "ratio"),
+                    ("win_rate", "maximize", "fraction"),
+                    ("trade_count", "minimize", "count"),
+                    ("coverage_count", "maximize", "count"),
+                    ("expected_coverage_count", "maximize", "count"),
+                )
+            ],
+            "admission_rule": (
+                "C9 HM1 results are incomparable until cost semantics exist"
+            ),
+        },
+        "cost_model": {
+            "model_id": "hm1.cost.unavailable.v1",
+            "sha256": _HM1_COST_SEMANTICS_SHA256,
+            "components": [
+                {
+                    "name": "transaction_cost",
+                    "rule": "unavailable in C9 HM1 mock",
+                }
+            ],
+            "currency": "not_applicable",
+        },
+    }
+)
+
+
+def _require_hm1_mock_contract(mapping: Mapping[str, object]) -> None:
+    """Keep C5 G05 / C6 J01/J04 mock aggregates under fixed semantics."""
+
+    try:
+        live_domain = {
+            "metrics": mapping["metrics"],
+            "cost_model": mapping["cost_model"],
+        }
+        matches = _canonical_json(live_domain) == _HM1_SUPPORTED_DOMAIN_BYTES
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EvaluationIntegrityError("HM1 mock contract mismatch") from exc
+    if not matches:
+        raise EvaluationIntegrityError("HM1 mock contract mismatch")
+
+
 def _finite_or_none(value: object, field: str) -> float | None:
     if value is None:
         return None
@@ -579,6 +649,8 @@ class HM1FuturesPlugin:
     def evaluate(
         self, candidate: ValidatedCandidate, split: AuthorizedSplit
     ) -> EvaluationResult:
+        contract = split.contract.to_dict()
+        _require_hm1_mock_contract(contract)
         if not isinstance(split.data, HM1SplitData):
             raise EvaluationIntegrityError("HM1 split data type mismatch")
         binding = split.binding
@@ -590,7 +662,6 @@ class HM1FuturesPlugin:
             or binding.plugin_identity != self.identity
         ):
             raise EvaluationIntegrityError("HM1 split binding mismatch")
-        contract = split.contract.to_dict()
         development = contract["data"]["splits"]["development"]
         if (
             split.data.role != "development"
@@ -600,19 +671,6 @@ class HM1FuturesPlugin:
             or split.request.split_manifest_hash != split.data.split_manifest_sha256
         ):
             raise EvaluationIntegrityError("HM1 development identity mismatch")
-        metrics = contract["metrics"]
-        if metrics["primary"]["name"] != "portfolio_daily_sharpe" or [
-            item["name"] for item in metrics["diagnostics"]
-        ] != [
-            "annualized_return",
-            "max_drawdown",
-            "calmar",
-            "win_rate",
-            "trade_count",
-            "coverage_count",
-            "expected_coverage_count",
-        ]:
-            raise EvaluationIntegrityError("HM1 metric contract mismatch")
         binding.runtime_lock.verify()
         try:
             output = split.data.read_engine_output()

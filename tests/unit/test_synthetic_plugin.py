@@ -6,12 +6,15 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
+from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
+    EvaluationIntegrityError,
     EvaluationInvariantError,
     QuantTaskPlugin,
     ValidatedCandidate,
@@ -26,6 +29,7 @@ from q_arbor.plugins.synthetic import (
 )
 from tests.evaluation_helpers import (
     REPOSITORY_ROOT,
+    bind_validation,
     directory_entries,
     fixture_bytes,
     invalid_synthetic_case,
@@ -349,3 +353,132 @@ def test_synthetic_split_factory_rejects_gate_and_final_before_store_issuance(
         )
 
     assert directory_entries(store_root) == before
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "constraint_operator",
+        "constraint_threshold",
+        "development_time_range",
+        "cost_rule",
+        "primary_aggregation",
+    ],
+)
+def test_synthetic_factory_rejects_computation_contract_variants_before_issuance(
+    tmp_path: Path,
+    variant: str,
+) -> None:
+    root = tmp_path / variant
+    identity = synthetic_identity()
+    plugin = SyntheticSignalPlugin.create(identity)
+    draft = cast(
+        dict[str, Any],
+        synthetic_contract_draft(
+            plugin_identity=identity,
+            baseline_ref="baseline/main@0123456789abcdef",
+        ),
+    )
+    if variant == "constraint_operator":
+        draft["metrics"]["hard_constraints"][0]["operator"] = "ge"
+    elif variant == "constraint_threshold":
+        draft["metrics"]["hard_constraints"][0]["threshold"] = 0.3
+    elif variant == "development_time_range":
+        draft["data"]["splits"]["development"]["time_range"]["start"] = (
+            "2019-01-01T00:00:00Z"
+        )
+    elif variant == "cost_rule":
+        draft["cost_model"]["components"][0]["rule"] = "0.002 per unit turnover"
+    elif variant == "primary_aggregation":
+        draft["metrics"]["primary"]["aggregation"] = "mean_across_folds"
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError("unknown synthetic contract variant")
+
+    contract = freeze_contract(draft)
+    candidate = materialize_candidate(
+        root / "candidate",
+        contract,
+        fixture_bytes("synthetic_planted_candidate.json"),
+    )
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root,
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    assert isinstance(receipt, ValidatedCandidate)
+    request = make_request(contract, receipt, split_role="development")
+    runtime = runtime_fixture(root, contract)
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    before = directory_entries(store_root)
+
+    with pytest.raises(
+        EvaluationIntegrityError,
+        match="synthetic computation contract mismatch",
+    ):
+        make_synthetic_development_split(
+            request,
+            contract,
+            receipt,
+            plugin,
+            runtime.lock,
+            result_id=f"result.synthetic.variant.{variant}",
+            evaluation_seed=7,
+            artifact_store=store,
+            produced_by_event_id=f"event.synthetic.variant.{variant}",
+        )
+
+    assert directory_entries(store_root) == before
+
+
+def test_synthetic_factory_does_not_pin_noncomputation_contract_fields(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "noncomputation"
+    identity = synthetic_identity()
+    plugin = SyntheticSignalPlugin.create(identity)
+    draft = cast(
+        dict[str, Any],
+        synthetic_contract_draft(
+            plugin_identity=identity,
+            baseline_ref="baseline/main@0123456789abcdef",
+        ),
+    )
+    draft["objective"]["baseline_ref"] = "baseline/alternate@fedcba9876543210"
+    draft["objective"]["research_question"] = "Alternate public smoke question"
+    draft["budgets"]["max_nodes"] = 9
+    contract = freeze_contract(draft)
+    candidate = materialize_candidate(
+        root / "candidate",
+        contract,
+        fixture_bytes("synthetic_planted_candidate.json"),
+    )
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root,
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    assert isinstance(receipt, ValidatedCandidate)
+    request = make_request(contract, receipt, split_role="development")
+    runtime = runtime_fixture(root, contract)
+    store = ContentAddressedArtifactStore.create(root / "store")
+
+    split = make_synthetic_development_split(
+        request,
+        contract,
+        receipt,
+        plugin,
+        runtime.lock,
+        result_id="result.synthetic.noncomputation",
+        evaluation_seed=7,
+        artifact_store=store,
+        produced_by_event_id="event.synthetic.noncomputation",
+    )
+
+    assert plugin.evaluate(receipt, split).status == "success"

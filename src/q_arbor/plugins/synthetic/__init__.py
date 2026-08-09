@@ -56,6 +56,7 @@ _FOLD_RANGES: Final = {
     "fold.a": "fixture-window-a",
     "fold.b": "fixture-window-b",
 }
+_COMPUTATION_CONTRACT_FIELDS: Final = ("data", "metrics", "cost_model")
 
 
 def _canonical_json(value: object) -> bytes:
@@ -270,6 +271,36 @@ def synthetic_contract_draft(
         "statistical_plan": [],
         "seeds": [7, 19],
     }
+
+
+def _require_synthetic_computation_contract(
+    mapping: Mapping[str, object],
+    plugin: SyntheticSignalPlugin,
+) -> None:
+    """Pin C5 G05 / C6 J01/J04 labels to the known-truth computation."""
+
+    try:
+        objective = mapping["objective"]
+        if not isinstance(objective, Mapping):
+            raise TypeError
+        baseline_ref = objective["baseline_ref"]
+        if not isinstance(baseline_ref, str):
+            raise TypeError
+        expected = synthetic_contract_draft(
+            plugin_identity=plugin.identity,
+            baseline_ref=baseline_ref,
+        )
+        live_domain = {field: mapping[field] for field in _COMPUTATION_CONTRACT_FIELDS}
+        expected_domain = {
+            field: expected[field] for field in _COMPUTATION_CONTRACT_FIELDS
+        }
+        matches = _canonical_json(live_domain) == _canonical_json(expected_domain)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EvaluationIntegrityError(
+            "synthetic computation contract mismatch"
+        ) from exc
+    if not matches:
+        raise EvaluationIntegrityError("synthetic computation contract mismatch")
 
 
 def _strict_candidate(payload: bytes) -> tuple[str, bytes]:
@@ -963,18 +994,9 @@ def make_synthetic_development_split(
     ):
         raise EvaluationSchemaError("synthetic factory input type mismatch")
     mapping = contract.to_dict()
-    identities = synthetic_fixture_identities()
-    splits = mapping["data"]["splits"]
-    expected = {
-        "data_snapshot_sha256": mapping["data"]["snapshot_sha256"],
-        "data_schema_sha256": mapping["data"]["schema_sha256"],
-        "development_manifest_sha256": splits["development"]["manifest_sha256"],
-        "gate_manifest_sha256": splits["gate"]["manifest_sha256"],
-        "final_manifest_sha256": splits["final"]["manifest_sha256"],
-        "cost_model_sha256": mapping["cost_model"]["sha256"],
-    }
-    if mapping["task_kind"] != "synthetic_factor" or expected != dict(identities):
+    if mapping["task_kind"] != "synthetic_factor":
         raise EvaluationIntegrityError("synthetic fixture identity mismatch")
+    _require_synthetic_computation_contract(mapping, plugin)
     fold_policy = runtime_lock.fold_policy
     if (
         fold_policy.mode != "required"

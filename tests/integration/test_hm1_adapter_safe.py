@@ -8,10 +8,12 @@ from typing import Any
 
 import pytest
 
+from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
     EvaluationDecodeError,
+    EvaluationIntegrityError,
     EvaluationInvariantError,
     EvaluationSchemaError,
     QuantTaskPlugin,
@@ -300,6 +302,126 @@ def test_hm1_mock_factory_rejects_gate_and_final_before_store_issuance(
         )
 
     assert directory_entries(store_root) == before
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "primary_direction",
+        "diagnostic_unit",
+        "diagnostic_aggregation",
+        "hard_constraint",
+        "cost_rule",
+    ],
+)
+def test_hm1_mock_factory_rejects_contract_relabelling_before_issuance(
+    tmp_path: Path,
+    variant: str,
+) -> None:
+    root = tmp_path / variant
+    identity = hm1_identity()
+    plugin = HM1FuturesPlugin.create(identity)
+    mapping = hm1_contract(identity).to_dict()
+    if variant == "primary_direction":
+        mapping["metrics"]["primary"]["direction"] = "minimize"
+    elif variant == "diagnostic_unit":
+        mapping["metrics"]["diagnostics"][0]["unit"] = "ratio"
+    elif variant == "diagnostic_aggregation":
+        mapping["metrics"]["diagnostics"][0]["aggregation"] = "mean_across_folds"
+    elif variant == "hard_constraint":
+        mapping["metrics"]["hard_constraints"] = [
+            {
+                "name": "max_drawdown",
+                "operator": "le",
+                "threshold": 0.2,
+                "unit": "fraction",
+            }
+        ]
+    elif variant == "cost_rule":
+        mapping["cost_model"]["components"][0]["rule"] = "estimated elsewhere"
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError("unknown HM1 contract variant")
+    contract = freeze_contract(mapping)
+    candidate = materialize_candidate(
+        root / "candidate",
+        contract,
+        fixture_bytes("hm1_valid_strategy.py"),
+    )
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root,
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    request = make_request(contract, receipt)
+    runtime = runtime_fixture(root, contract, aggregate_only=True)
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    output = HM1EngineOutput.from_mapping(hm1_engine_mapping("complete"))
+    before = directory_entries(store_root)
+
+    with pytest.raises(EvaluationIntegrityError, match="HM1 mock contract mismatch"):
+        make_hm1_mock_development_split(
+            request,
+            contract,
+            receipt,
+            plugin,
+            runtime.lock,
+            result_id=f"result.hm1.variant.{variant}",
+            evaluation_seed=7,
+            artifact_store=store,
+            produced_by_event_id=f"event.hm1.variant.{variant}",
+            engine_output=output,
+        )
+
+    assert directory_entries(store_root) == before
+
+
+def test_hm1_evaluator_rechecks_exact_contract_before_output_access(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluator-domain"
+    identity = hm1_identity()
+    plugin = HM1FuturesPlugin.create(identity)
+    contract = hm1_contract(identity)
+    candidate = materialize_candidate(
+        root / "candidate",
+        contract,
+        fixture_bytes("hm1_valid_strategy.py"),
+    )
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root,
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    request = make_request(contract, receipt)
+    runtime = runtime_fixture(root, contract, aggregate_only=True)
+    store = ContentAddressedArtifactStore.create(root / "store")
+    output = HM1EngineOutput.from_mapping(hm1_engine_mapping("complete"))
+    split = make_hm1_mock_development_split(
+        request,
+        contract,
+        receipt,
+        plugin,
+        runtime.lock,
+        result_id="result.hm1.evaluator-domain",
+        evaluation_seed=7,
+        artifact_store=store,
+        produced_by_event_id="event.hm1.evaluator-domain",
+        engine_output=output,
+        untrusted_failure_detail=SECRET_CANARY,
+    )
+    changed_mapping = contract.to_dict()
+    changed_mapping["metrics"]["primary"]["unit"] = "fraction"
+    object.__setattr__(split, "_contract", freeze_contract(changed_mapping))
+
+    with pytest.raises(EvaluationIntegrityError, match="HM1 mock contract mismatch"):
+        plugin.evaluate(receipt, split)
 
 
 def test_hm1_untrusted_failure_detail_is_sanitized_everywhere(
