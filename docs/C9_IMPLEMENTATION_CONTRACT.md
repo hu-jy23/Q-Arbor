@@ -87,6 +87,12 @@ a detached copy, `to_json()` returns compact sorted NFC UTF-8 JSON, `.sha256`
 hashes the complete canonical value, and `write(path)` is atomic. A self-hash is
 never inserted into a C6 payload.
 
+`ArtifactRef` is the single deliberate property-name exception because its C6
+wire shape already owns a normative `sha256` field: `ArtifactRef.sha256` returns
+the referenced content digest, while `ArtifactRef.canonical_sha256` returns the
+hash of the complete canonical ArtifactRef object. Every other JSON-backed
+value uses `.sha256` for its complete canonical value.
+
 `CandidateArtifact`, `CandidateReceipt`, `ValidatedCandidate`,
 `EvaluationBinding`, split/data/sink/resolver objects, and plugins are runtime
 carriers. They are immutable where concrete, expose only the properties below,
