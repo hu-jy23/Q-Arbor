@@ -37,6 +37,7 @@ from q_arbor.evaluation import (
     freeze_candidate_validation,
     freeze_evaluation_result,
 )
+from q_arbor.evaluation.candidate import _classify_candidate_surface
 from q_arbor.evaluation.results import _freeze_controlled_evaluation_result
 
 _ARTIFACT_TYPE: Final = "q-arbor.synthetic-signal.v1"
@@ -357,6 +358,7 @@ def _validation_mapping(
     status: str,
     canonical_sha256: str | None,
     checks: list[dict[str, str]],
+    failure_summary: str,
 ) -> dict[str, object]:
     failure = None
     method = "exact-json-v1" if canonical_sha256 is not None else "exact-bytes-v1"
@@ -371,7 +373,7 @@ def _validation_mapping(
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
-            "summary": "synthetic.invalid_candidate",
+            "summary": failure_summary,
             "evidence_ids": [],
         }
     return {
@@ -387,6 +389,17 @@ def _validation_mapping(
         "checks": checks,
         "failure": failure,
     }
+
+
+def _mark_check_failed(
+    checks: list[dict[str, str]], *, name: str, evidence: str
+) -> None:
+    for check in checks:
+        if check["name"] == name:
+            check["status"] = "fail"
+            check["evidence"] = evidence
+            return
+    raise EvaluationInvariantError("internal validation check is missing")
 
 
 def _fold_observations(signal: str) -> list[dict[str, float | str]]:
@@ -472,6 +485,7 @@ class SyntheticSignalPlugin:
             or contract.to_dict()["task_kind"] != "synthetic_factor"
         ):
             raise EvaluationIntegrityError("synthetic contract task kind mismatch")
+        surface_failure = _classify_candidate_surface(candidate, contract)
         checks = [
             {
                 "name": "candidate.kind",
@@ -479,20 +493,36 @@ class SyntheticSignalPlugin:
                 "evidence": "candidate.kind.ok",
             },
             {
+                "name": "candidate.surface",
+                "status": "pass" if surface_failure is None else "fail",
+                "evidence": (
+                    "candidate.surface.ok"
+                    if surface_failure is None
+                    else str(surface_failure)
+                ),
+            },
+            {
                 "name": "synthetic.payload",
                 "status": "pass",
                 "evidence": "synthetic.payload.ok",
             },
         ]
-        status = "valid"
+        status = "valid" if surface_failure is None else "invalid_candidate"
+        failure_summary = (
+            "synthetic.invalid_candidate"
+            if surface_failure is None
+            else str(surface_failure)
+        )
         canonical_sha256: str | None = None
+        kind_valid = True
         try:
             if candidate.artifact.to_dict()["kind"] != _ARTIFACT_TYPE:
-                checks[0] = {
-                    "name": "candidate.kind",
-                    "status": "fail",
-                    "evidence": "candidate.kind.invalid",
-                }
+                kind_valid = False
+                _mark_check_failed(
+                    checks,
+                    name="candidate.kind",
+                    evidence="candidate.kind.invalid",
+                )
                 raise ValueError("candidate kind mismatch")
             _signal, canonical = _strict_candidate(candidate.payload)
             canonical_sha256 = hashlib.sha256(
@@ -500,12 +530,12 @@ class SyntheticSignalPlugin:
             ).hexdigest()
         except ValueError:
             status = "invalid_candidate"
-            if checks[0]["status"] == "pass":
-                checks[1] = {
-                    "name": "synthetic.payload",
-                    "status": "fail",
-                    "evidence": "synthetic.payload.invalid",
-                }
+            if kind_valid:
+                _mark_check_failed(
+                    checks,
+                    name="synthetic.payload",
+                    evidence="synthetic.payload.invalid",
+                )
         return freeze_candidate_validation(
             _validation_mapping(
                 candidate=candidate,
@@ -514,6 +544,7 @@ class SyntheticSignalPlugin:
                 status=status,
                 canonical_sha256=canonical_sha256,
                 checks=sorted(checks, key=lambda item: item["name"]),
+                failure_summary=failure_summary,
             ),
             candidate=candidate,
             contract=contract,

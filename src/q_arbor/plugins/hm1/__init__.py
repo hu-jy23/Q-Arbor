@@ -29,6 +29,7 @@ from q_arbor.evaluation import (
     ValidatedCandidate,
     freeze_candidate_validation,
 )
+from q_arbor.evaluation.candidate import _classify_candidate_surface
 
 _ARTIFACT_TYPE: Final = "q-arbor.hm1-strategy-python.v1"
 _ENGINE_KEYS: Final = {
@@ -422,6 +423,7 @@ def _validation_mapping(
     status: str,
     canonical_sha256: str | None,
     checks: list[dict[str, str]],
+    failure_summary: str,
 ) -> dict[str, object]:
     failure = None
     method = "exact-ast-v1" if canonical_sha256 is not None else "exact-bytes-v1"
@@ -436,7 +438,7 @@ def _validation_mapping(
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
-            "summary": "hm1.invalid_candidate",
+            "summary": failure_summary,
             "evidence_ids": [],
         }
     return {
@@ -452,6 +454,17 @@ def _validation_mapping(
         "checks": checks,
         "failure": failure,
     }
+
+
+def _mark_check_failed(
+    checks: list[dict[str, str]], *, name: str, evidence: str
+) -> None:
+    for check in checks:
+        if check["name"] == name:
+            check["status"] = "fail"
+            check["evidence"] = evidence
+            return
+    raise EvaluationInvariantError("internal validation check is missing")
 
 
 def _diagnostic_check_name(metric_name: str) -> str:
@@ -493,23 +506,38 @@ class HM1FuturesPlugin:
             or contract.to_dict()["task_kind"] != "futures_strategy"
         ):
             raise EvaluationIntegrityError("HM1 contract task kind mismatch")
+        surface_failure = _classify_candidate_surface(candidate, contract)
         checks = [
             {
                 "name": "candidate.kind",
                 "status": "pass",
                 "evidence": "candidate.kind.ok",
             },
+            {
+                "name": "candidate.surface",
+                "status": "pass" if surface_failure is None else "fail",
+                "evidence": (
+                    "candidate.surface.ok"
+                    if surface_failure is None
+                    else str(surface_failure)
+                ),
+            },
             {"name": "hm1.ast", "status": "pass", "evidence": "hm1.ast.ok"},
         ]
-        status = "valid"
+        status = "valid" if surface_failure is None else "invalid_candidate"
+        failure_summary = (
+            "hm1.invalid_candidate" if surface_failure is None else str(surface_failure)
+        )
         canonical_sha256: str | None = None
+        kind_valid = True
         try:
             if candidate.artifact.to_dict()["kind"] != _ARTIFACT_TYPE:
-                checks[0] = {
-                    "name": "candidate.kind",
-                    "status": "fail",
-                    "evidence": "candidate.kind.invalid",
-                }
+                kind_valid = False
+                _mark_check_failed(
+                    checks,
+                    name="candidate.kind",
+                    evidence="candidate.kind.invalid",
+                )
                 raise ValueError("candidate kind mismatch")
             try:
                 source = candidate.payload.decode("utf-8")
@@ -526,12 +554,12 @@ class HM1FuturesPlugin:
             ).hexdigest()
         except (RecursionError, ValueError):
             status = "invalid_candidate"
-            if checks[0]["status"] == "pass":
-                checks[1] = {
-                    "name": "hm1.ast",
-                    "status": "fail",
-                    "evidence": "hm1.ast.invalid",
-                }
+            if kind_valid:
+                _mark_check_failed(
+                    checks,
+                    name="hm1.ast",
+                    evidence="hm1.ast.invalid",
+                )
         mapping = _validation_mapping(
             candidate=candidate,
             contract=contract,
@@ -539,6 +567,7 @@ class HM1FuturesPlugin:
             status=status,
             canonical_sha256=canonical_sha256,
             checks=sorted(checks, key=lambda item: item["name"]),
+            failure_summary=failure_summary,
         )
         return freeze_candidate_validation(
             mapping,

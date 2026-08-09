@@ -30,6 +30,7 @@ from q_arbor.evaluation import (
     ValidatedCandidate,
     freeze_candidate_validation,
 )
+from q_arbor.evaluation.candidate import _classify_candidate_surface
 
 _ARTIFACT_TYPE: Final = "q-arbor.formula-alpha.v1"
 _IDENTIFIER_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
@@ -280,6 +281,7 @@ def _candidate_validation_mapping(
     status: str,
     canonical_sha256: str | None,
     checks: list[dict[str, str]],
+    failure_summary: str,
 ) -> dict[str, object]:
     failure = None
     method = "exact-json-ast-v1" if canonical_sha256 is not None else "exact-bytes-v1"
@@ -294,7 +296,7 @@ def _candidate_validation_mapping(
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
-            "summary": "formula.invalid_candidate",
+            "summary": failure_summary,
             "evidence_ids": [],
         }
     return {
@@ -310,6 +312,17 @@ def _candidate_validation_mapping(
         "checks": checks,
         "failure": failure,
     }
+
+
+def _mark_check_failed(
+    checks: list[dict[str, str]], *, name: str, evidence: str
+) -> None:
+    for check in checks:
+        if check["name"] == name:
+            check["status"] = "fail"
+            check["evidence"] = evidence
+            return
+    raise EvaluationInvariantError("internal validation check is missing")
 
 
 class FormulaAlphaPlugin:
@@ -360,11 +373,21 @@ class FormulaAlphaPlugin:
             raise EvaluationIntegrityError("contract data is unavailable")
         if contract_data["schema_sha256"] != self._public_schema.sha256:
             raise EvaluationIntegrityError("formula public schema hash mismatch")
+        surface_failure = _classify_candidate_surface(candidate, contract)
         checks = [
             {
                 "name": "candidate.kind",
                 "status": "pass",
                 "evidence": "candidate.kind.ok",
+            },
+            {
+                "name": "candidate.surface",
+                "status": "pass" if surface_failure is None else "fail",
+                "evidence": (
+                    "candidate.surface.ok"
+                    if surface_failure is None
+                    else str(surface_failure)
+                ),
             },
             {
                 "name": "formula.expression",
@@ -378,14 +401,21 @@ class FormulaAlphaPlugin:
             },
         ]
         canonical_sha256: str | None = None
-        status = "valid"
+        status = "valid" if surface_failure is None else "invalid_candidate"
+        failure_summary = (
+            "formula.invalid_candidate"
+            if surface_failure is None
+            else str(surface_failure)
+        )
+        kind_valid = True
         try:
             if candidate.artifact.to_dict()["kind"] != _ARTIFACT_TYPE:
-                checks[0] = {
-                    "name": "candidate.kind",
-                    "status": "fail",
-                    "evidence": "candidate.kind.invalid",
-                }
+                kind_valid = False
+                _mark_check_failed(
+                    checks,
+                    name="candidate.kind",
+                    evidence="candidate.kind.invalid",
+                )
                 raise ValueError("candidate kind mismatch")
             document = _strict_json_object(candidate.payload)
             canonical = _validate_expression(document, self._public_schema._fields)
@@ -394,12 +424,12 @@ class FormulaAlphaPlugin:
             ).hexdigest()
         except (OverflowError, ValueError):
             status = "invalid_candidate"
-            if checks[0]["status"] == "pass":
-                checks[1] = {
-                    "name": "formula.expression",
-                    "status": "fail",
-                    "evidence": "formula.expression.invalid",
-                }
+            if kind_valid:
+                _mark_check_failed(
+                    checks,
+                    name="formula.expression",
+                    evidence="formula.expression.invalid",
+                )
         mapping = _candidate_validation_mapping(
             candidate=candidate,
             contract=contract,
@@ -407,6 +437,7 @@ class FormulaAlphaPlugin:
             status=status,
             canonical_sha256=canonical_sha256,
             checks=sorted(checks, key=lambda item: item["name"]),
+            failure_summary=failure_summary,
         )
         return freeze_candidate_validation(
             mapping,
