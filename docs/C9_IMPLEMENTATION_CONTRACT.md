@@ -731,6 +731,27 @@ codes remain sorted ReasonCodes. Engine status is resolved before any coverage
 test; coverage precedence applies only to `complete`. No text-only or ambiguous
 metric is parsed.
 
+Before constructing a binding, view, or sink, or reading an engine output, the
+HM1 mock factory and evaluator require the complete `metrics` object to equal
+the qualification projection: primary `portfolio_daily_sharpe`
+(`maximize`, `ratio`, `aggregate_only`); no hard constraints; diagnostics, in
+order, `annualized_return` (`maximize`, `fraction`), `max_drawdown`
+(`minimize`, `fraction`), `calmar` (`maximize`, `ratio`), `win_rate`
+(`maximize`, `fraction`), `trade_count` (`minimize`, `count`),
+`coverage_count` (`maximize`, `count`), and `expected_coverage_count`
+(`maximize`, `count`), all with `aggregate_only`; and admission rule
+`C9 HM1 results are incomparable until cost semantics exist`. The complete
+`cost_model` object is also fixed to `model_id=hm1.cost.unavailable.v1`,
+`sha256=437ffc85b60e22acdeb71ecd08472a1de9436fa3707964113e264ccb3301604c`,
+one component `{name: transaction_cost, rule: unavailable in C9 HM1 mock}`,
+and `currency=not_applicable`, with no `execution_delay`. The digest is the
+SHA-256 of canonical JSON
+`{"kind":"hm1_cost_semantics","schema_version":"1.0","status":"unavailable"}`.
+A schema-valid change to any of these names, directions, units, aggregations,
+constraints, admission text, or cost fields is unsupported and fails closed
+with `EvaluationIntegrityError`. This check precedes every mock capability or
+output access, so fixed aggregates cannot be relabelled by a caller contract.
+
 Candidate kind is `q-arbor.hm1-strategy-python.v1`. Validation UTF-8 decodes and
 AST-parses without import. Top level permits one optional docstring, imports
 only from `math`, `typing`, `dataclasses`, `research_env.backtest.strategy`, or
