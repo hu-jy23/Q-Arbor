@@ -608,8 +608,11 @@ read-only seam over `EvaluationResult`, `EvaluationRequest`, C8
 `QuantHypothesisNode`, and one proposed C6 `EvidenceRef` mapping. It returns
 `None` only when:
 
-- request/result binding is already valid; `request.node_id == node.id` and
-  `request.attempt_id` occurs in `node.attempt_ids`;
+- result request ID and split equal the request, while result provenance
+  `candidate_sha256`, `contract_hash`, `plugin_code_sha256`, and
+  `split_manifest_hash` equal the corresponding request identities;
+- `request.node_id == node.id` and `request.attempt_id` occurs in
+  `node.attempt_ids`;
 - evidence has `level=observed`, `status=valid`, the same attempt/result/split,
   and every evidence artifact is byte-identical to a result artifact;
 - result status is success, failure is null, the primary is finite, and every
