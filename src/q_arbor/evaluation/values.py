@@ -90,7 +90,9 @@ class _ImmutableJSON:
         return f"{type(self).__name__}(sha256={self.sha256!r})"
 
 
-def _normalized_definition(mapping: Mapping[str, Any], name: str) -> dict[str, JSONValue]:
+def _normalized_definition(
+    mapping: Mapping[str, Any], name: str
+) -> dict[str, JSONValue]:
     normalized = normalize_mapping(mapping)
     validate_definition(normalized, name)
     return normalized
@@ -241,7 +243,9 @@ class EvaluationFailure(_ImmutableJSON):
         summary = normalized["summary"]
         if failure_type == "none":
             if summary != "":
-                raise EvaluationInvariantError("failure_type=none requires empty summary")
+                raise EvaluationInvariantError(
+                    "failure_type=none requires empty summary"
+                )
         else:
             require_reason_code(summary, "failure summary")
         evidence_ids = cast(list[JSONValue], normalized["evidence_ids"])

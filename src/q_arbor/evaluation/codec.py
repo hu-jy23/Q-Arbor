@@ -21,6 +21,7 @@ from jsonschema.exceptions import SchemaError
 
 from .errors import (
     EvaluationDecodeError,
+    EvaluationInvariantError,
     EvaluationPersistenceError,
     EvaluationSchemaError,
 )
@@ -122,9 +123,7 @@ def _normalize_json(value: Any, active: set[int]) -> JSONValue:
             return normalized
         finally:
             active.remove(identity)
-    if isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         identity = id(value)
         if identity in active:
             raise EvaluationDecodeError("evaluation artifact contains a cycle")
@@ -186,7 +185,9 @@ def deep_freeze(value: JSONValue) -> FrozenJSON:
 
     try:
         if isinstance(value, dict):
-            return MappingProxyType({key: deep_freeze(item) for key, item in value.items()})
+            return MappingProxyType(
+                {key: deep_freeze(item) for key, item in value.items()}
+            )
         if isinstance(value, list):
             return tuple(deep_freeze(item) for item in value)
         return value
@@ -207,9 +208,11 @@ def deep_thaw(value: FrozenJSON) -> JSONValue:
 @lru_cache(maxsize=1)
 def _schema_mapping() -> dict[str, Any]:
     try:
-        raw = resources.files("q_arbor.spec").joinpath(
-            "C6_INTERFACE_SCHEMA.json"
-        ).read_bytes()
+        raw = (
+            resources.files("q_arbor.spec")
+            .joinpath("C6_INTERFACE_SCHEMA.json")
+            .read_bytes()
+        )
     except (OSError, ModuleNotFoundError) as exc:
         raise EvaluationSchemaError("frozen C6 schema is unavailable") from exc
     if sha256(raw).hexdigest() != SCHEMA_SHA256:
@@ -256,9 +259,7 @@ def _display_path(parts: Sequence[Any]) -> str:
     for part in clean:
         if isinstance(part, int):
             path += f"[{part}]"
-        elif isinstance(part, str) and re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*", part
-        ):
+        elif isinstance(part, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part):
             path += f".{part}"
         else:
             path += "[?]"
@@ -275,10 +276,7 @@ def _run_schema_validation(
         errors = sorted(
             validator.iter_errors(value),
             key=lambda error: (
-                tuple(
-                    f"{type(part).__name__}:{part}"
-                    for part in error.absolute_path
-                ),
+                tuple(f"{type(part).__name__}:{part}" for part in error.absolute_path),
                 str(error.validator or "schema"),
             ),
         )
@@ -319,62 +317,55 @@ def validate_discriminator(
 
 def require_identifier(value: Any, field: str) -> str:
     if not isinstance(value, str) or IDENTIFIER_RE.fullmatch(value) is None:
-        from .errors import EvaluationInvariantError
-
-        raise EvaluationInvariantError(f"{field} is not a strict identifier")
+        raise EvaluationSchemaError(f"{field} is not a strict identifier")
     return value
 
 
 def require_sha256(value: Any, field: str) -> str:
     if not isinstance(value, str) or SHA256_RE.fullmatch(value) is None:
-        from .errors import EvaluationInvariantError
-
-        raise EvaluationInvariantError(f"{field} is not a strict SHA-256 digest")
+        raise EvaluationSchemaError(f"{field} is not a strict SHA-256 digest")
     return value
 
 
 def require_reason_code(value: Any, field: str) -> str:
     if not isinstance(value, str) or REASON_CODE_RE.fullmatch(value) is None:
-        from .errors import EvaluationInvariantError
-
-        raise EvaluationInvariantError(f"{field} is not a safe ReasonCode")
+        raise EvaluationSchemaError(f"{field} is not a safe ReasonCode")
     return value
 
 
 def require_git_commit(value: Any, field: str) -> str:
     if not isinstance(value, str) or GIT_COMMIT_RE.fullmatch(value) is None:
-        from .errors import EvaluationInvariantError
-
-        raise EvaluationInvariantError(f"{field} is not a full Git object ID")
+        raise EvaluationSchemaError(f"{field} is not a full Git object ID")
     return value
 
 
 def require_media_type(value: Any, field: str) -> str:
     if not isinstance(value, str) or MEDIA_TYPE_RE.fullmatch(value) is None:
-        from .errors import EvaluationInvariantError
-
-        raise EvaluationInvariantError(f"{field} is not a canonical media type")
+        raise EvaluationSchemaError(f"{field} is not a canonical media type")
     return value
 
 
 def require_literal_path(value: Any, field: str) -> str:
     """Apply the C7 literal path and Git/filesystem byte limits."""
 
-    from .errors import EvaluationInvariantError
-
     if not isinstance(value, str) or not value:
-        raise EvaluationInvariantError(f"{field} must be a relative path")
+        raise EvaluationSchemaError(f"{field} must be a relative path")
+    # These are the frozen C6 RelativePath shape failures.
+    if value.startswith("/"):
+        raise EvaluationSchemaError(f"{field} is not repository-relative")
+    if "\\" in value or _WINDOWS_DRIVE_RE.match(value):
+        raise EvaluationSchemaError(f"{field} is not repository-relative")
+    segments = value.split("/")
+    if "//" in value or any(segment in {".", ".."} for segment in segments):
+        raise EvaluationSchemaError(f"{field} fails the relative-path schema")
+
+    # C6-valid paths still cross the stricter C7/C9 canonical path invariant.
     if value != value.strip() or value.endswith("/"):
         raise EvaluationInvariantError(f"{field} is not a canonical path")
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise EvaluationInvariantError(f"{field} contains a control character")
-    if value.startswith(("/", "~", "./", "../")) or "://" in value:
+    if value.startswith("~") or "://" in value:
         raise EvaluationInvariantError(f"{field} is not repository-relative")
-    if "\\" in value or _WINDOWS_DRIVE_RE.match(value):
-        raise EvaluationInvariantError(f"{field} is not repository-relative")
-    segments = value.split("/")
-    if any(segment in {"", ".", ".."} for segment in segments):
-        raise EvaluationInvariantError(f"{field} is not canonical")
     if any(character in value for character in _GLOB_META):
         raise EvaluationInvariantError(f"{field} must identify one literal path")
     if len(value.encode("utf-8")) > 4095 or any(

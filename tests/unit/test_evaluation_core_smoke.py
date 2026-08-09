@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,15 @@ from q_arbor.evaluation import (
     CandidateArtifact,
     CandidateReceipt,
     ContentAddressedArtifactStore,
+    EvaluationBinding,
     EvaluationBoundaryError,
     EvaluationDecodeError,
     EvaluationFailure,
+    EvaluationIntegrityError,
     EvaluationInvariantError,
+    EvaluationPersistenceError,
+    EvaluationSchemaError,
+    EvaluationSummary,
     MaterializationReceipt,
     MetricValue,
     PluginIdentity,
@@ -26,8 +32,13 @@ from q_arbor.evaluation import (
     VerifiedRuntimeLock,
     freeze_candidate_validation,
     freeze_evaluation_request,
+    freeze_evaluation_result,
+    load_evaluation_result,
+    make_access_denied_result,
 )
+from q_arbor.evaluation import runtime as evaluation_runtime
 from q_arbor.evaluation.codec import decode_json_bytes, normalize_mapping
+from q_arbor.evaluation.results import _freeze_controlled_evaluation_result
 from tests.helpers import valid_contract_mapping
 
 
@@ -49,9 +60,10 @@ def test_primitive_values_are_canonical_detached_and_immutable(tmp_path: Path) -
 
     assert artifact.artifact_id == "candidate.one"
     assert artifact.sha256 == "a" * 64
-    assert artifact.canonical_sha256 == hashlib.sha256(
-        artifact.to_json().encode("utf-8")
-    ).hexdigest()
+    assert (
+        artifact.canonical_sha256
+        == hashlib.sha256(artifact.to_json().encode("utf-8")).hexdigest()
+    )
     assert artifact.to_json() == json.dumps(
         artifact.to_dict(),
         sort_keys=True,
@@ -88,23 +100,27 @@ def test_primitive_schema_and_lexical_guards() -> None:
             "artifact_type": "q-arbor.synthetic-signal.v1",
         }
     )
-    assert MetricValue.from_mapping(
-        {"name": "score", "value": 0, "direction": "maximize", "unit": "ratio"}
-    ).value == 0
-    assert EvaluationFailure.from_mapping(
-        {
-            "failure_type": "timeout",
-            "summary": "evaluation.timeout",
-            "evidence_ids": [],
-        }
-    ).summary == "evaluation.timeout"
+    assert (
+        MetricValue.from_mapping(
+            {"name": "score", "value": 0, "direction": "maximize", "unit": "ratio"}
+        ).value
+        == 0
+    )
+    assert (
+        EvaluationFailure.from_mapping(
+            {
+                "failure_type": "timeout",
+                "summary": "evaluation.timeout",
+                "evidence_ids": [],
+            }
+        ).summary
+        == "evaluation.timeout"
+    )
     assert ReasonCode.parse("evaluation.timeout") == "evaluation.timeout"
 
     with pytest.raises(EvaluationInvariantError):
-        ArtifactRef.from_mapping(
-            _artifact_mapping(relative_path="strategies/*.json")
-        )
-    with pytest.raises(EvaluationInvariantError):
+        ArtifactRef.from_mapping(_artifact_mapping(relative_path="strategies/*.json"))
+    with pytest.raises(EvaluationSchemaError):
         ReasonCode.parse("contains/slash")
 
 
@@ -118,7 +134,7 @@ def _candidate_fixture(tmp_path: Path):
     contract = freeze_contract(valid_contract_mapping())
     plugin = PluginIdentity.from_mapping(contract.to_dict()["plugin"])
     candidate_path = tmp_path / "strategies" / "candidate.json"
-    candidate_path.parent.mkdir()
+    candidate_path.parent.mkdir(parents=True)
     payload = b'{"candidate":"one"}'
     candidate_path.write_bytes(payload)
     artifact = ArtifactRef.from_mapping(
@@ -245,6 +261,7 @@ def test_runtime_lock_and_store_bind_issued_artifacts(tmp_path: Path) -> None:
             "required_check_names": [
                 "candidate.identity",
                 "cost.reconciled",
+                f"diagnostic.{hashlib.sha256(b'turnover').hexdigest()[:16]}.observed",
                 "split.identity",
             ],
             "fold_policy": {
@@ -305,6 +322,31 @@ def test_runtime_lock_and_store_bind_issued_artifacts(tmp_path: Path) -> None:
         produced_by_event_id="event.one",
         runtime_lock=runtime_lock,
     )
+    preplanted = b"preplanted"
+    preplanted_digest = hashlib.sha256(preplanted).hexdigest()
+    preplanted_identity = hashlib.sha256(
+        json.dumps(
+            {
+                "kind": "q-arbor.aggregate-metrics.v1",
+                "media_type": "application/json",
+                "sha256": preplanted_digest,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    request_digest = hashlib.sha256(b"request.one").hexdigest()
+    preplanted_path = (
+        store_root / "artifacts" / "evaluations" / request_digest / preplanted_identity
+    )
+    preplanted_path.write_bytes(preplanted)
+    with pytest.raises(EvaluationBoundaryError):
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=preplanted,
+        )
+
     artifact = sink.put(
         kind="q-arbor.aggregate-metrics.v1",
         media_type="application/json",
@@ -317,3 +359,324 @@ def test_runtime_lock_and_store_bind_issued_artifacts(tmp_path: Path) -> None:
         runtime_lock_sha256=runtime_lock.sha256,
     )
     assert sink.issued_refs == (artifact,)
+
+
+def test_artifact_retry_requires_same_sink_pending_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binding, _ = _binding_fixture(tmp_path)
+    store = binding.artifact_resolver
+    sink = store.scope(
+        request_id=binding.request.request_id,
+        produced_by_event_id="event.retry",
+        runtime_lock=binding.runtime_lock,
+    )
+    content = b'{"retry":true}'
+    original_fsync = evaluation_runtime.os.fsync
+    failed = False
+
+    def fail_first_directory_sync(fd: int) -> None:
+        nonlocal failed
+        if not failed and stat.S_ISDIR(os.fstat(fd).st_mode):
+            failed = True
+            raise OSError("injected directory fsync failure")
+        original_fsync(fd)
+
+    monkeypatch.setattr(evaluation_runtime.os, "fsync", fail_first_directory_sync)
+    with pytest.raises(EvaluationPersistenceError) as fault:
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+    assert fault.value.committed is True
+    monkeypatch.setattr(evaluation_runtime.os, "fsync", original_fsync)
+
+    unrelated_sink = store.scope(
+        request_id=binding.request.request_id,
+        produced_by_event_id="event.retry",
+        runtime_lock=binding.runtime_lock,
+    )
+    with pytest.raises(EvaluationBoundaryError):
+        unrelated_sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+
+    recovered = sink.put(
+        kind="q-arbor.aggregate-metrics.v1",
+        media_type="application/json",
+        content=content,
+    )
+    store.verify_issued(
+        recovered,
+        request_id=binding.request.request_id,
+        runtime_lock_sha256=binding.runtime_lock.sha256,
+    )
+
+
+def _binding_fixture(tmp_path: Path):
+    contract, plugin, candidate, receipt = _candidate_fixture(tmp_path / "candidate")
+    split = contract.to_dict()["data"]["splits"]["development"]
+    request = freeze_evaluation_request(
+        {
+            "request_id": "request.result",
+            "run_id": "run.one",
+            "node_id": "node.one",
+            "attempt_id": "attempt.one",
+            "idempotency_key": "request.result",
+            "contract_hash": contract.sha256,
+            "candidate": candidate.artifact.to_dict(),
+            "candidate_hash": candidate.candidate_hash,
+            "validation_receipt": receipt.receipt_ref.to_dict(),
+            "plugin": plugin.to_dict(),
+            "split_role": "development",
+            "split_manifest_hash": split["manifest_sha256"],
+            "capability_grant_id": "grant.one",
+            "requested_metrics": ["net_sharpe", "turnover"],
+            "created_event_id": "event.one",
+        },
+        contract=contract,
+        candidate_receipt=receipt,
+    )
+    store_root = tmp_path / "store"
+    runtime_dir = store_root / "runtime"
+    runtime_dir.mkdir(parents=True)
+    evaluator_bytes = b"result evaluator"
+    diagnostic_check = (
+        f"diagnostic.{hashlib.sha256(b'turnover').hexdigest()[:16]}.observed"
+    )
+    config = {
+        "schema_version": "1.0",
+        "plugin_config": {},
+        "policy": {
+            "required_check_names": [
+                "candidate.identity",
+                "cost.reconciled",
+                diagnostic_check,
+                "split.identity",
+            ],
+            "fold_policy": {
+                "mode": "required",
+                "expected_fold_ids": ["fold.a", "fold.b"],
+                "required_metric_names": ["net_sharpe", "turnover"],
+            },
+            "allowed_artifacts": [
+                {
+                    "kind": "q-arbor.aggregate-metrics.v1",
+                    "media_type": "application/json",
+                }
+            ],
+        },
+    }
+    config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    (runtime_dir / "evaluator.bin").write_bytes(evaluator_bytes)
+    (runtime_dir / "config.json").write_bytes(config_bytes)
+    store = ContentAddressedArtifactStore.create(store_root)
+    runtime_lock = VerifiedRuntimeLock.from_artifacts(
+        ArtifactRef.from_mapping(
+            {
+                "artifact_id": "runtime.evaluator.result",
+                "kind": "q-arbor.evaluator.v1",
+                "relative_path": "runtime/evaluator.bin",
+                "sha256": hashlib.sha256(evaluator_bytes).hexdigest(),
+            }
+        ),
+        ArtifactRef.from_mapping(
+            {
+                "artifact_id": "runtime.config.result",
+                "kind": "q-arbor.evaluator-config.v1",
+                "relative_path": "runtime/config.json",
+                "sha256": hashlib.sha256(config_bytes).hexdigest(),
+            }
+        ),
+        resolver=store,
+    )
+    binding = EvaluationBinding.create(
+        request,
+        contract,
+        receipt,
+        plugin,
+        runtime_lock,
+        result_id="result.one",
+        seed=7,
+        artifact_resolver=store,
+    )
+    return binding, diagnostic_check
+
+
+def _success_result_mapping(binding, diagnostic_check: str) -> dict[str, object]:
+    candidate = binding.candidate_receipt.candidate
+    contract = binding.contract.to_dict()
+    return {
+        "result_id": binding.result_id,
+        "request_id": binding.request.request_id,
+        "status": "success",
+        "split_role": "development",
+        "primary_metric": {
+            "name": "net_sharpe",
+            "value": 0,
+            "direction": "maximize",
+            "unit": "ratio",
+        },
+        "constraints": [
+            {
+                "name": "max_drawdown",
+                "status": "pass",
+                "evidence": "constraint.ok",
+            }
+        ],
+        "diagnostics": [
+            {
+                "name": "turnover",
+                "value": 0.75,
+                "direction": "minimize",
+                "unit": "fraction_per_day",
+            }
+        ],
+        "fold_metrics": [
+            {
+                "fold_id": fold_id,
+                "time_range": f"{fold_id}.range",
+                "metrics": [
+                    {
+                        "name": "net_sharpe",
+                        "value": 0,
+                        "direction": "maximize",
+                        "unit": "ratio",
+                    },
+                    {
+                        "name": "turnover",
+                        "value": 0.75,
+                        "direction": "minimize",
+                        "unit": "fraction_per_day",
+                    },
+                ],
+            }
+            for fold_id in ("fold.a", "fold.b")
+        ],
+        "costs": {
+            "gross": 0.9,
+            "transaction_cost": 0.1,
+            "net": 0.8,
+            "turnover": 0.75,
+            "cost_model_sha256": contract["cost_model"]["sha256"],
+        },
+        "checks": [
+            {"name": name, "status": "pass", "evidence": "evaluation.check.ok"}
+            for name in binding.runtime_lock.required_check_names
+        ],
+        "artifacts": [],
+        "provenance": {
+            "candidate_sha256": candidate.candidate_hash,
+            "code_commit": candidate.code_commit,
+            "data_snapshot_sha256": contract["data"]["snapshot_sha256"],
+            "split_manifest_hash": binding.request.split_manifest_hash,
+            "contract_hash": binding.contract.sha256,
+            "plugin_code_sha256": binding.plugin_identity.code_sha256,
+            "evaluator_sha256": binding.runtime_lock.evaluator_sha256,
+            "config_sha256": binding.runtime_lock.config_sha256,
+            "seed": binding.seed,
+        },
+        "failure": None,
+        "statistical_diagnostics": [],
+        "warnings": ["warning.z", "warning.a"],
+    }
+
+
+def test_result_round_trip_summary_and_hash_binding(tmp_path: Path) -> None:
+    binding, diagnostic_check = _binding_fixture(tmp_path)
+    mapping = _success_result_mapping(binding, diagnostic_check)
+    result = freeze_evaluation_result(mapping, binding=binding)
+
+    assert result.primary_metric.value == 0
+    assert tuple(result.warnings) == ("warning.a", "warning.z")
+    assert result.checks[2].name == diagnostic_check
+    summary = EvaluationSummary.from_result(result)
+    assert "provenance" not in summary.to_dict()
+    assert "artifacts" not in summary.to_dict()
+    assert "time_range" not in summary.to_dict()["fold_metrics"][0]
+
+    destination = tmp_path / "result.json"
+    result.write(destination)
+    loaded = load_evaluation_result(
+        destination,
+        binding=binding,
+        expected_sha256=result.sha256,
+    )
+    assert loaded == result
+
+    tampered = result.to_dict()
+    tampered["provenance"]["seed"] = 19
+    with pytest.raises(EvaluationIntegrityError):
+        freeze_evaluation_result(tampered, binding=binding)
+
+
+def test_access_denied_factory_is_exact_null_projection(tmp_path: Path) -> None:
+    binding, _ = _binding_fixture(tmp_path)
+    denied = make_access_denied_result(
+        binding=binding,
+        reason_code="authorization.denied",
+    )
+
+    assert denied.status == "access_denied"
+    assert denied.primary_metric.value is None
+    assert denied.failure is not None
+    assert denied.failure.failure_type == "access_denied"
+    assert denied.fold_metrics == ()
+    assert denied.artifacts == ()
+
+    smuggled = denied.to_dict()
+    smuggled["checks"][0] = {
+        "name": smuggled["checks"][0]["name"],
+        "status": "pass",
+        "evidence": "evaluation.check.ok",
+    }
+    with pytest.raises(EvaluationInvariantError):
+        freeze_evaluation_result(smuggled, binding=binding)
+
+
+def test_controlled_runtime_drift_accepts_only_exact_null_template(
+    tmp_path: Path,
+) -> None:
+    binding, _ = _binding_fixture(tmp_path)
+    payload = make_access_denied_result(
+        binding=binding,
+        reason_code="authorization.denied",
+    ).to_dict()
+    payload["status"] = "contaminated"
+    payload["failure"] = {
+        "failure_type": "contamination",
+        "summary": "runtime.contamination",
+        "evidence_ids": [],
+    }
+
+    result = _freeze_controlled_evaluation_result(payload, binding=binding)
+    assert result.status == "contaminated"
+
+    smuggled = copy.deepcopy(payload)
+    smuggled["diagnostics"][0]["value"] = 1
+    with pytest.raises(EvaluationInvariantError):
+        _freeze_controlled_evaluation_result(smuggled, binding=binding)
+
+    (tmp_path / "store" / "runtime" / "evaluator.bin").write_bytes(b"drifted")
+    destination = tmp_path / "controlled-contamination.json"
+    result.write(destination)
+    assert destination.read_text(encoding="utf-8") == result.to_json()
+
+
+def test_result_write_reverifies_runtime_before_touching_target(
+    tmp_path: Path,
+) -> None:
+    binding, diagnostic_check = _binding_fixture(tmp_path)
+    result = freeze_evaluation_result(
+        _success_result_mapping(binding, diagnostic_check),
+        binding=binding,
+    )
+    (tmp_path / "store" / "runtime" / "evaluator.bin").write_bytes(b"drifted")
+
+    destination = tmp_path / "must-not-exist.json"
+    with pytest.raises(EvaluationIntegrityError):
+        result.write(destination)
+    assert not destination.exists()

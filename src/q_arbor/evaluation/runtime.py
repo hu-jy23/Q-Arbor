@@ -174,17 +174,15 @@ def _validate_request_mapping(
     require_sha256(normalized["contract_hash"], "request contract_hash")
     require_sha256(normalized["candidate_hash"], "request candidate_hash")
     require_sha256(normalized["split_manifest_hash"], "request split manifest")
-    candidate = ArtifactRef.from_mapping(
-        cast(dict[str, Any], normalized["candidate"])
-    )
+    candidate = ArtifactRef.from_mapping(cast(dict[str, Any], normalized["candidate"]))
     validation_ref = ArtifactRef.from_mapping(
         cast(dict[str, Any], normalized["validation_receipt"])
     )
-    plugin = PluginIdentity.from_mapping(
-        cast(dict[str, Any], normalized["plugin"])
-    )
+    plugin = PluginIdentity.from_mapping(cast(dict[str, Any], normalized["plugin"]))
     if candidate_receipt.contract_hash != contract.sha256:
-        raise EvaluationIntegrityError("candidate receipt contract differs from request")
+        raise EvaluationIntegrityError(
+            "candidate receipt contract differs from request"
+        )
     if candidate_receipt.plugin_identity.to_dict() != contract_mapping["plugin"]:
         raise EvaluationIntegrityError("candidate receipt plugin differs from contract")
     if normalized["contract_hash"] != contract.sha256:
@@ -282,11 +280,19 @@ def load_evaluation_request(
 def _scan_config_keys(value: JSONValue, path: str = "config") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            normalized = "".join(character for character in key.lower() if character.isalnum())
+            normalized = "".join(
+                character for character in key.lower() if character.isalnum()
+            )
             if any(part in normalized for part in _SECRET_KEY_PARTS):
-                raise EvaluationBoundaryError("runtime config contains a secret-like key")
-            if any(marker in key.lower() for marker in ("path", "uri", "url", "locator")):
-                raise EvaluationBoundaryError("runtime config contains a locator-like key")
+                raise EvaluationBoundaryError(
+                    "runtime config contains a secret-like key"
+                )
+            if any(
+                marker in key.lower() for marker in ("path", "uri", "url", "locator")
+            ):
+                raise EvaluationBoundaryError(
+                    "runtime config contains a locator-like key"
+                )
             _scan_config_keys(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -318,16 +324,12 @@ def _validate_runtime_config(
     if cast(list[str], required_checks) != sorted(
         cast(list[str], required_checks)
     ) or len(required_checks) != len(set(cast(list[str], required_checks))):
-        raise EvaluationInvariantError(
-            "required check names must be sorted and unique"
-        )
+        raise EvaluationInvariantError("required check names must be sorted and unique")
     if not required_checks:
         raise EvaluationInvariantError("runtime policy needs required checks")
     if not isinstance(fold_policy_mapping, dict):
         raise EvaluationSchemaError("fold_policy must be an object")
-    fold_policy = FoldPolicy.from_mapping(
-        cast(dict[str, Any], fold_policy_mapping)
-    )
+    fold_policy = FoldPolicy.from_mapping(cast(dict[str, Any], fold_policy_mapping))
     if not isinstance(allowed_artifacts, list):
         raise EvaluationSchemaError("allowed_artifacts must be an array")
     pairs: list[tuple[str, str]] = []
@@ -335,10 +337,14 @@ def _validate_runtime_config(
         if not isinstance(item, dict) or set(item) != {"kind", "media_type"}:
             raise EvaluationSchemaError("allowed artifact entry fields do not match C9")
         kind = require_reason_code(item["kind"], "allowed artifact kind")
-        media_type = require_media_type(item["media_type"], "allowed artifact media type")
+        media_type = require_media_type(
+            item["media_type"], "allowed artifact media type"
+        )
         pairs.append((kind, media_type))
     if pairs != sorted(pairs) or len(pairs) != len(set(pairs)):
-        raise EvaluationInvariantError("allowed artifact pairs must be sorted and unique")
+        raise EvaluationInvariantError(
+            "allowed artifact pairs must be sorted and unique"
+        )
     return normalized, fold_policy
 
 
@@ -368,10 +374,11 @@ class VerifiedRuntimeLock(_ImmutableJSON):
                 raise EvaluationSchemaError("resolver does not implement runtime reads")
         try:
             resolver.verify(evaluator_ref)
-            resolver.verify(config_ref)
             config_bytes = resolver.read_bytes(config_ref)
         except Exception as exc:
-            raise EvaluationIntegrityError("runtime artifacts failed verification") from exc
+            raise EvaluationIntegrityError(
+                "runtime artifacts failed verification"
+            ) from exc
         if not isinstance(config_bytes, bytes):
             raise EvaluationIntegrityError("runtime resolver returned non-bytes")
         if sha256(config_bytes).hexdigest() != config_ref.sha256:
@@ -382,6 +389,12 @@ class VerifiedRuntimeLock(_ImmutableJSON):
         config, _ = _validate_runtime_config(decoded)
         if canonical_normalized_bytes(config) != config_bytes:
             raise EvaluationIntegrityError("runtime config bytes are not canonical")
+        try:
+            resolver.verify(config_ref)
+        except Exception as exc:
+            raise EvaluationIntegrityError(
+                "runtime config changed during verification"
+            ) from exc
         normalized: dict[str, JSONValue] = {
             "schema_version": "1.0",
             "evaluator": evaluator_ref.to_dict(),
@@ -434,8 +447,9 @@ class VerifiedRuntimeLock(_ImmutableJSON):
 
     def verify(self) -> None:
         try:
+            # The final config identity check is the verification boundary.
+            # C5 G02/G05 and C6 J04 require all bytes/policy to be closed first.
             self._resolver.verify(self.evaluator_ref)
-            self._resolver.verify(self.config_ref)
             current = self._resolver.read_bytes(self.config_ref)
         except Exception as exc:
             raise EvaluationIntegrityError("runtime artifacts drifted") from exc
@@ -450,6 +464,10 @@ class VerifiedRuntimeLock(_ImmutableJSON):
             raise EvaluationIntegrityError("runtime config semantics drifted") from exc
         if cast(dict[str, JSONValue], config["policy"]) != self.to_dict()["policy"]:
             raise EvaluationIntegrityError("runtime policy drifted")
+        try:
+            self._resolver.verify(self.config_ref)
+        except Exception as exc:
+            raise EvaluationIntegrityError("runtime config drifted") from exc
 
 
 class EvaluationBinding:
@@ -688,9 +706,7 @@ class ContentAddressedArtifactStore:
         raise TypeError("use ContentAddressedArtifactStore.create")
 
     @classmethod
-    def create(
-        cls, root: str | os.PathLike[str]
-    ) -> ContentAddressedArtifactStore:
+    def create(cls, root: str | os.PathLike[str]) -> ContentAddressedArtifactStore:
         root_fd = _open_or_create_store_root(root)
         try:
             root_stat = os.fstat(root_fd)
@@ -791,7 +807,7 @@ class ContentAddressedArtifactStore:
         request_digest = sha256(request_id.encode("utf-8")).hexdigest()
         prefix = f"artifacts/evaluations/{request_digest}/"
         if not ref.relative_path.startswith(prefix):
-            raise EvaluationBoundaryError("artifact is outside its request namespace")
+            raise EvaluationIntegrityError("artifact request namespace differs")
         directory_fd = _open_beneath_directory(self._root_fd, prefix.rstrip("/"))
         try:
             scope_mapping = _read_json_object_at(directory_fd, ".scope.json")
@@ -817,7 +833,9 @@ class ContentAddressedArtifactStore:
                 )
             }
         except (KeyError, TypeError) as exc:
-            raise EvaluationIntegrityError("artifact scope record is malformed") from exc
+            raise EvaluationIntegrityError(
+                "artifact scope record is malformed"
+            ) from exc
         if (ref.kind, ref.media_type) not in allowed:
             raise EvaluationBoundaryError("artifact kind/media pair is not allowed")
         if record != ref.to_dict():
@@ -921,11 +939,15 @@ def _create_or_verify_immutable_file_at(
     directory_fd: int,
     name: str,
     content: bytes,
+    *,
+    allow_existing: bool = True,
 ) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
     except FileExistsError:
+        if not allow_existing:
+            raise EvaluationBoundaryError("artifact issuance record already exists")
         try:
             existing_fd = os.open(
                 name,
@@ -947,13 +969,19 @@ def _create_or_verify_immutable_file_at(
             ) from exc
         if existing != content:
             raise EvaluationIntegrityError("immutable store record conflicts")
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise EvaluationPersistenceError(
+                "immutable store record directory sync failed",
+                committed=True,
+            ) from exc
         return
     except OSError as exc:
         raise EvaluationPersistenceError(
             "unable to create immutable store record",
             committed=False,
         ) from exc
-    committed = False
     try:
         offset = 0
         while offset < len(content):
@@ -962,11 +990,14 @@ def _create_or_verify_immutable_file_at(
                 raise OSError("short immutable-record write")
             offset += written
         os.fsync(fd)
-        committed = True
     except OSError as exc:
+        try:
+            os.unlink(name, dir_fd=directory_fd)
+        except OSError:
+            pass
         raise EvaluationPersistenceError(
             "unable to persist immutable store record",
-            committed=committed,
+            committed=False,
         ) from exc
     finally:
         os.close(fd)
@@ -983,7 +1014,9 @@ def _create_exclusive_file_at(
     directory_fd: int,
     name: str,
     content: bytes,
-) -> None:
+    *,
+    recover_existing: bool = False,
+) -> bool:
     try:
         fd = os.open(
             name,
@@ -991,8 +1024,36 @@ def _create_exclusive_file_at(
             0o600,
             dir_fd=directory_fd,
         )
-    except FileExistsError as exc:
-        raise EvaluationBoundaryError("artifact ID/path already exists") from exc
+    except FileExistsError:
+        if not recover_existing:
+            raise EvaluationBoundaryError("pre-existing artifact content is not issued")
+        try:
+            existing_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            try:
+                existing = _read_regular_fd(existing_fd)
+            finally:
+                os.close(existing_fd)
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                raise EvaluationBoundaryError("existing artifact is a symlink") from exc
+            raise EvaluationPersistenceError(
+                "unable to recover existing evaluation artifact",
+                committed=False,
+            ) from exc
+        if existing != content:
+            raise EvaluationIntegrityError("existing artifact content conflicts")
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise EvaluationPersistenceError(
+                "recovered artifact directory sync failed",
+                committed=True,
+            ) from exc
+        return False
     except OSError as exc:
         raise EvaluationPersistenceError(
             "unable to create evaluation artifact",
@@ -1024,12 +1085,35 @@ def _create_exclusive_file_at(
             "evaluation artifact directory sync failed",
             committed=True,
         ) from exc
+    return True
+
+
+def _record_exists_at(directory_fd: int, name: str) -> bool:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise EvaluationBoundaryError("issuance record is a symlink") from exc
+        raise EvaluationPersistenceError(
+            "unable to inspect issuance record",
+            committed=False,
+        ) from exc
+    try:
+        result = os.fstat(fd)
+        if not stat.S_ISREG(result.st_mode) or result.st_nlink != 1:
+            raise EvaluationBoundaryError("issuance record is not a regular file")
+    finally:
+        os.close(fd)
+    return True
 
 
 class _ScopedArtifactSink:
     __slots__ = (
         "_initialized",
         "_issued_refs",
+        "_pending_states",
         "_produced_by_event_id",
         "_relative_directory",
         "_request_id",
@@ -1052,6 +1136,7 @@ class _ScopedArtifactSink:
         object.__setattr__(self, "_runtime_lock", runtime_lock)
         object.__setattr__(self, "_relative_directory", relative_directory)
         object.__setattr__(self, "_issued_refs", [])
+        object.__setattr__(self, "_pending_states", {})
         object.__setattr__(self, "_initialized", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -1094,30 +1179,57 @@ class _ScopedArtifactSink:
             self._relative_directory,
         )
         try:
-            _create_exclusive_file_at(
-                directory_fd,
-                identity_digest,
-                content,
-            )
             issued_fd = _open_beneath_directory(directory_fd, ".issued")
             try:
-                record_name = (
-                    sha256(artifact_id.encode("utf-8")).hexdigest() + ".json"
-                )
-                _create_or_verify_immutable_file_at(
-                    issued_fd,
-                    record_name,
-                    canonical_normalized_bytes(ref.to_dict()),
-                )
-            except Exception:
-                try:
-                    os.unlink(identity_digest, dir_fd=directory_fd)
-                except OSError:
-                    pass
-                raise
+                record_name = sha256(artifact_id.encode("utf-8")).hexdigest() + ".json"
+                pending_state = self._pending_states.get(identity_digest)
+                record_exists = _record_exists_at(issued_fd, record_name)
+                if record_exists:
+                    if pending_state != "issued":
+                        raise EvaluationBoundaryError("artifact ID/path already issued")
+                    record = _read_json_object_at(issued_fd, record_name)
+                    if record != ref.to_dict():
+                        raise EvaluationIntegrityError(
+                            "pending issuance record differs from artifact"
+                        )
+                    _create_exclusive_file_at(
+                        directory_fd,
+                        identity_digest,
+                        content,
+                        recover_existing=True,
+                    )
+                else:
+                    if pending_state == "issued":
+                        raise EvaluationIntegrityError(
+                            "committed issuance record disappeared"
+                        )
+                    try:
+                        _create_exclusive_file_at(
+                            directory_fd,
+                            identity_digest,
+                            content,
+                            recover_existing=pending_state == "content",
+                        )
+                    except EvaluationPersistenceError as exc:
+                        if exc.committed:
+                            self._pending_states[identity_digest] = "content"
+                        raise
+                    try:
+                        _create_or_verify_immutable_file_at(
+                            issued_fd,
+                            record_name,
+                            canonical_normalized_bytes(ref.to_dict()),
+                            allow_existing=False,
+                        )
+                    except EvaluationPersistenceError as exc:
+                        self._pending_states[identity_digest] = (
+                            "issued" if exc.committed else "content"
+                        )
+                        raise
             finally:
                 os.close(issued_fd)
         finally:
             os.close(directory_fd)
+        self._pending_states.pop(identity_digest, None)
         self._issued_refs.append(ref)
         return ref

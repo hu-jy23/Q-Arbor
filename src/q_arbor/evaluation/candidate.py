@@ -6,7 +6,7 @@ import errno
 import fnmatch
 import os
 import stat
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Final, Self, cast
@@ -88,8 +88,10 @@ def _plugin_matches_contract(
 def _safe_literal_path(value: Any, field: str) -> str:
     try:
         return require_literal_path(value, field)
-    except EvaluationInvariantError as exc:
-        raise EvaluationBoundaryError(f"{field} escapes the materialization root") from exc
+    except (EvaluationSchemaError, EvaluationInvariantError) as exc:
+        raise EvaluationBoundaryError(
+            f"{field} escapes the materialization root"
+        ) from exc
 
 
 def _identity_tuple(result: os.stat_result) -> tuple[int, ...]:
@@ -144,9 +146,17 @@ class MaterializationReceipt(_ImmutableJSON):
     def scan(
         cls,
         root: str | os.PathLike[str],
-        relative_paths: Sequence[str],
+        relative_paths: Iterable[str],
     ) -> MaterializationReceipt:
-        normalized_paths = normalize_json(relative_paths)
+        if isinstance(relative_paths, (str, bytes, bytearray)):
+            raise EvaluationSchemaError("materialization paths must be an iterable")
+        try:
+            supplied_paths = list(relative_paths)
+        except TypeError as exc:
+            raise EvaluationSchemaError(
+                "materialization paths must be an iterable"
+            ) from exc
+        normalized_paths = normalize_json(supplied_paths)
         if not isinstance(normalized_paths, list) or not all(
             isinstance(path, str) for path in normalized_paths
         ):
@@ -155,7 +165,9 @@ class MaterializationReceipt(_ImmutableJSON):
         if len(paths) != len(set(paths)):
             raise EvaluationInvariantError("materialization paths must be unique")
         paths.sort()
-        safe_paths = [_safe_literal_path(path, "materialization path") for path in paths]
+        safe_paths = [
+            _safe_literal_path(path, "materialization path") for path in paths
+        ]
 
         root_path = Path(root)
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -298,7 +310,10 @@ class CandidateArtifact:
             for entry in materialization.to_dict()["entries"]
             if entry["path"] == artifact.relative_path
         ]
-        if len(matching_entries) != 1 or matching_entries[0]["sha256"] != artifact.sha256:
+        if (
+            len(matching_entries) != 1
+            or matching_entries[0]["sha256"] != artifact.sha256
+        ):
             raise EvaluationIntegrityError(
                 "candidate artifact is not bound to its materialization receipt"
             )
@@ -382,12 +397,18 @@ def _validate_candidate_surface(
     protected = cast(list[str], contract_mapping["protected_paths"])
     for path in candidate.changed_paths:
         if not any(fnmatch.fnmatch(path, pattern) for pattern in editable):
-            raise EvaluationInvariantError("candidate change is outside editable surface")
+            raise EvaluationInvariantError(
+                "candidate change is outside editable surface"
+            )
         if any(fnmatch.fnmatch(path, pattern) for pattern in protected):
-            raise EvaluationInvariantError("candidate change intersects protected surface")
+            raise EvaluationInvariantError(
+                "candidate change intersects protected surface"
+            )
     materialized = {
         cast(str, entry["path"])
-        for entry in cast(list[dict[str, JSONValue]], candidate.materialization.to_dict()["entries"])
+        for entry in cast(
+            list[dict[str, JSONValue]], candidate.materialization.to_dict()["entries"]
+        )
     }
     if not set(cast(list[str], contract_mapping["required_outputs"])) <= materialized:
         raise EvaluationInvariantError("candidate is missing a required output")
@@ -452,7 +473,9 @@ class CandidateValidation(_ImmutableJSON):
 def _canonicalize_candidate_validation(mapping: dict[str, JSONValue]) -> None:
     checks = mapping.get("checks")
     if isinstance(checks, list) and all(isinstance(item, dict) for item in checks):
-        checks.sort(key=lambda item: cast(str, cast(dict[str, JSONValue], item).get("name", "")))
+        checks.sort(
+            key=lambda item: cast(str, cast(dict[str, JSONValue], item).get("name", ""))
+        )
 
 
 def _validate_candidate_validation_mapping(
@@ -521,36 +544,46 @@ def _validate_candidate_validation_mapping(
     if failure_value is not None:
         if not isinstance(failure_value, dict):
             raise EvaluationSchemaError("validation failure must be an object or null")
-        failure = EvaluationFailure.from_mapping(
-            cast(dict[str, Any], failure_value)
-        )
+        failure = EvaluationFailure.from_mapping(cast(dict[str, Any], failure_value))
 
     if normalized["contract_hash"] != contract.sha256:
         raise EvaluationIntegrityError("validation contract hash differs from contract")
     if plugin != plugin_identity:
-        raise EvaluationIntegrityError("validation plugin identity differs from live plugin")
+        raise EvaluationIntegrityError(
+            "validation plugin identity differs from live plugin"
+        )
     if artifact != candidate.artifact:
-        raise EvaluationIntegrityError("validation candidate artifact differs from input")
+        raise EvaluationIntegrityError(
+            "validation candidate artifact differs from input"
+        )
     if normalized["candidate_hash"] != candidate.candidate_hash:
         raise EvaluationIntegrityError("validation candidate hash differs from input")
     if tuple(cast(list[str], changed_paths)) != candidate.changed_paths:
         raise EvaluationIntegrityError("validation changed_paths differ from candidate")
 
     status = cast(str, normalized["status"])
-    check_values = [CheckResult.from_mapping(cast(dict[str, Any], item)) for item in checks]
+    check_values = [
+        CheckResult.from_mapping(cast(dict[str, Any], item)) for item in checks
+    ]
     if status == "valid":
         _validate_candidate_surface(candidate, contract_mapping)
         if candidate.artifact.kind != plugin_identity.artifact_type:
             raise EvaluationInvariantError("candidate kind differs from live plugin")
-        if canonical_form is None or any(check.status != "pass" for check in check_values):
-            raise EvaluationInvariantError("valid candidate requires canonical passing checks")
+        if canonical_form is None or any(
+            check.status != "pass" for check in check_values
+        ):
+            raise EvaluationInvariantError(
+                "valid candidate requires canonical passing checks"
+            )
         if failure is not None:
             raise EvaluationInvariantError("valid candidate cannot contain a failure")
     elif status == "invalid_candidate":
         if not any(check.status == "fail" for check in check_values):
             raise EvaluationInvariantError("invalid candidate requires a failed check")
         if failure is None or failure.failure_type != "invalid_candidate":
-            raise EvaluationInvariantError("invalid candidate failure type is inconsistent")
+            raise EvaluationInvariantError(
+                "invalid candidate failure type is inconsistent"
+            )
     elif failure is None or failure.failure_type != "implementation_failure":
         raise EvaluationInvariantError(
             "validation implementation failure type is inconsistent"
