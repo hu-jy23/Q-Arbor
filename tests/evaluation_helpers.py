@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from q_arbor.contracts import QuantResearchContract, freeze_contract
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
@@ -38,8 +39,6 @@ from q_arbor.plugins.synthetic import (
     make_synthetic_development_split,
     synthetic_contract_draft,
 )
-
-from q_arbor.contracts import QuantResearchContract, freeze_contract
 from tests.hypothesis_helpers import canonical_json
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]

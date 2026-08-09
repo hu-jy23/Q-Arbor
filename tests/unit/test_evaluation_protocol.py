@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from q_arbor import evaluation
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
@@ -33,8 +35,6 @@ from q_arbor.evaluation import (
 )
 from q_arbor.plugins.formula_alpha import FormulaMockOutcome
 from q_arbor.plugins.synthetic import SyntheticSignalPlugin
-
-from q_arbor import evaluation
 from tests.evaluation_helpers import (
     artifact_ref_mapping,
     formula_case,

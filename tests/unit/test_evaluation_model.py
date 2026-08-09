@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from q_arbor.evaluation import (
     ArtifactRef,
     CheckResult,
@@ -30,7 +31,6 @@ from q_arbor.evaluation import (
     load_evaluation_result,
     validate_evaluation_result,
 )
-
 from tests.evaluation_helpers import (
     evaluation_fixture,
     plugin_identity_mapping,
