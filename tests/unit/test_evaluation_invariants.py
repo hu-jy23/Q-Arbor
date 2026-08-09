@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from q_arbor.plugins.synthetic import make_synthetic_development_split
+
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
@@ -25,8 +27,6 @@ from q_arbor.evaluation import (
     make_candidate_failure_result,
     validate_evaluation_result,
 )
-from q_arbor.plugins.synthetic import make_synthetic_development_split
-
 from tests.evaluation_helpers import (
     CODE_COMMIT,
     artifact_ref_mapping,
@@ -883,11 +883,15 @@ def test_first_post_execution_runtime_drift_returns_contaminated(
         runtime.evaluator_path if runtime_part == "evaluator" else runtime.config_path
     )
     flipped = False
+    target_verifications = 0
 
     def verify_then_flip(ref: ArtifactRef) -> None:
-        nonlocal flipped
+        nonlocal flipped, target_verifications
         original_verify(ref)
-        if not flipped and ref == target_ref:
+        if ref == target_ref:
+            target_verifications += 1
+        flip_after = 1 if runtime_part == "evaluator" else 2
+        if not flipped and target_verifications == flip_after:
             flipped = True
             corrupt_bytes(target_path)
 
@@ -905,6 +909,48 @@ def test_first_post_execution_runtime_drift_returns_contaminated(
     assert result.artifacts == ()
     assert target.read_bytes() == result.to_json().encode("utf-8")
     assert identity == plugin.identity
+
+
+def test_config_drift_before_precheck_read_is_integrity_error(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "case"
+    plugin, _, contract, _, receipt = validated_synthetic_components(root)
+    request = make_request(contract, receipt, request_id="request.precheck.tamper")
+    runtime = runtime_fixture(root, contract)
+    from q_arbor.evaluation import ContentAddressedArtifactStore
+
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    split = make_synthetic_development_split(
+        request,
+        contract,
+        receipt,
+        plugin,
+        runtime.lock,
+        result_id="result.precheck.tamper",
+        evaluation_seed=7,
+        artifact_store=store,
+        produced_by_event_id="event.precheck.tamper",
+    )
+    before = directory_entries(store_root)
+    original_verify = runtime.resolver.verify
+    flipped = False
+
+    def verify_then_flip_config(ref: ArtifactRef) -> None:
+        nonlocal flipped
+        original_verify(ref)
+        if not flipped and ref == runtime.config_ref:
+            flipped = True
+            corrupt_bytes(runtime.config_path)
+
+    runtime.resolver.verify = verify_then_flip_config  # type: ignore[method-assign]
+
+    with pytest.raises(EvaluationIntegrityError):
+        plugin.evaluate(receipt, split)
+
+    assert flipped is True
+    assert directory_entries(store_root) == before
 
 
 def test_issued_artifact_is_bound_to_complete_runtime_lock(tmp_path: Path) -> None:
