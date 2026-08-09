@@ -198,9 +198,10 @@ recover/verify after any committed durability error.
 
 `MaterializationReceipt.scan` is the public host intake seam. It resolves the
 caller root once and walks relative components from a held root directory file
-descriptor. On Linux/WSL it opens with `openat`/`dir_fd` plus `O_NOFOLLOW` (or an
-equivalent no-follow platform primitive), then `fstat`s the opened descriptor,
-requires one regular file, hashes bytes from that same descriptor, and checks
+descriptor. On Linux/WSL every final read opens with `openat`/`dir_fd` plus
+`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` (or an equivalent fail-fast platform
+primitive), then `fstat`s the opened descriptor, requires one regular file,
+hashes bytes from that same descriptor, and checks
 the device/inode/size/mtime identity did not drift before close. An unavailable
 equivalent, replacement, symlink, `st_nlink != 1`, or identity change fails
 closed. It also verifies each entry remains under the root and serializes no
@@ -496,7 +497,9 @@ ArtifactRef record. Both live below the hashed request directory and are opened
 through the same anchored no-follow directory chain as artifact content; an
 existing symlink/non-regular sidecar or parent, unknown/missing field, wrong
 schema/config/policy value, or noncanonical encoding fails before artifact
-content is trusted.
+content is trusted. Artifact-content, sidecar, existence-check, and recovery
+reads use the same nonblocking close-on-exec final-open rule, so a FIFO/device
+cannot block before the regular-file check.
 
 ## 6. Provenance and status invariants
 
