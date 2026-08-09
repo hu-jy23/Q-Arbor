@@ -11,6 +11,7 @@ import pytest
 from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
+    EvaluationBinding,
     EvaluationBoundaryError,
     EvaluationDecodeError,
     EvaluationIntegrityError,
@@ -127,6 +128,171 @@ def test_hm1_five_engine_states_and_complete_precedence_are_exact(
             checks[diagnostic_check_name(item.name)] == "not_observed"
             for item in case.result.diagnostics
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "primary.name",
+        "primary.direction",
+        "primary.unit",
+        "primary.aggregation",
+        "hard_constraints",
+        "diagnostic.name",
+        "diagnostic.direction",
+        "diagnostic.unit",
+        "diagnostic.aggregation",
+        "diagnostics.order",
+        "admission_rule",
+        "cost_model.model_id",
+        "cost_model.sha256",
+        "cost_model.component.name",
+        "cost_model.component.rule",
+        "cost_model.currency",
+        "cost_model.execution_delay",
+    ],
+)
+def test_hm1_factory_rejects_schema_valid_semantic_relabel_before_any_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    root = tmp_path / mutation.replace(".", "-")
+    identity = hm1_identity()
+    plugin = HM1FuturesPlugin.create(identity)
+    original = hm1_contract(identity)
+    candidate = materialize_candidate(
+        root / "candidate",
+        original,
+        fixture_bytes("hm1_valid_strategy.py"),
+    )
+    mapping = original.to_dict()
+    primary = mapping["metrics"]["primary"]
+    diagnostics = mapping["metrics"]["diagnostics"]
+    diagnostic = diagnostics[0]
+    cost_model = mapping["cost_model"]
+    if mutation == "primary.name":
+        primary["name"] = "alternate_daily_sharpe"
+    elif mutation == "primary.direction":
+        primary["direction"] = "minimize"
+    elif mutation == "primary.unit":
+        primary["unit"] = "fraction"
+    elif mutation == "primary.aggregation":
+        primary["aggregation"] = "median_across_folds"
+    elif mutation == "hard_constraints":
+        mapping["metrics"]["hard_constraints"] = [
+            {
+                "name": "max_drawdown",
+                "operator": "le",
+                "threshold": 0.2,
+                "unit": "fraction",
+            }
+        ]
+    elif mutation == "diagnostic.name":
+        diagnostic["name"] = "alternate_annualized_return"
+    elif mutation == "diagnostic.direction":
+        diagnostic["direction"] = "minimize"
+    elif mutation == "diagnostic.unit":
+        diagnostic["unit"] = "ratio"
+    elif mutation == "diagnostic.aggregation":
+        diagnostic["aggregation"] = "mean_across_folds"
+    elif mutation == "diagnostics.order":
+        diagnostics[0], diagnostics[1] = diagnostics[1], diagnostics[0]
+    elif mutation == "admission_rule":
+        mapping["metrics"]["admission_rule"] = (
+            "schema-valid relabelled HM1 admission rule"
+        )
+    elif mutation == "cost_model.model_id":
+        cost_model["model_id"] = "hm1.cost.unavailable.v2"
+    elif mutation == "cost_model.sha256":
+        current = cost_model["sha256"]
+        cost_model["sha256"] = "0" * 64 if current != "0" * 64 else "1" * 64
+    elif mutation == "cost_model.component.name":
+        cost_model["components"][0]["name"] = "fees"
+    elif mutation == "cost_model.component.rule":
+        cost_model["components"][0]["rule"] = "unknown in C9 HM1 mock"
+    elif mutation == "cost_model.currency":
+        cost_model["currency"] = "unitless"
+    elif mutation == "cost_model.execution_delay":
+        cost_model["execution_delay"] = "P1D"
+    else:  # pragma: no cover - closed parameters
+        raise AssertionError(f"unexpected mutation: {mutation}")
+
+    contract = freeze_contract(mapping)
+    assert contract.sha256 != original.sha256
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root / "mutated",
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    request = make_request(contract, receipt, split_role="development")
+    runtime = runtime_fixture(root / "mutated", contract, aggregate_only=True)
+    output = HM1EngineOutput.from_mapping(hm1_engine_mapping("incomparable"))
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    calls = {"binding": 0, "view": 0, "scope": 0, "output": 0}
+
+    def forbidden_binding(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["binding"] += 1
+        raise AssertionError("HM1 drift reached binding construction")
+
+    def forbidden_view(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["view"] += 1
+        raise AssertionError("HM1 drift reached view construction")
+
+    def forbidden_scope(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["scope"] += 1
+        raise AssertionError("HM1 drift reached artifact scope")
+
+    def forbidden_output(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["output"] += 1
+        raise AssertionError("HM1 drift reached engine output")
+
+    monkeypatch.setattr(EvaluationBinding, "create", forbidden_binding)
+    monkeypatch.setattr(HM1SplitData, "__init__", forbidden_view)
+    monkeypatch.setattr(ContentAddressedArtifactStore, "scope", forbidden_scope)
+    monkeypatch.setattr(HM1SplitData, "read_engine_output", forbidden_output)
+    before = directory_entries(store_root)
+    snapshots = (
+        contract.to_json(),
+        request.to_json(),
+        receipt.validation.to_json(),
+        candidate.payload,
+        output.to_json(),
+        plugin.identity.to_json(),
+    )
+
+    with pytest.raises(EvaluationIntegrityError):
+        make_hm1_mock_development_split(
+            request,
+            contract,
+            receipt,
+            plugin,
+            runtime.lock,
+            result_id="result.hm1.semantic-drift",
+            evaluation_seed=7,
+            artifact_store=store,
+            produced_by_event_id="event.hm1.semantic-drift",
+            engine_output=output,
+        )
+
+    assert calls == {"binding": 0, "view": 0, "scope": 0, "output": 0}
+    assert directory_entries(store_root) == before == ()
+    assert snapshots == (
+        contract.to_json(),
+        request.to_json(),
+        receipt.validation.to_json(),
+        candidate.payload,
+        output.to_json(),
+        plugin.identity.to_json(),
+    )
 
 
 @pytest.mark.parametrize(

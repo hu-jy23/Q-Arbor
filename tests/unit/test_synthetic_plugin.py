@@ -13,6 +13,7 @@ import pytest
 from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
+    EvaluationBinding,
     EvaluationBoundaryError,
     EvaluationIntegrityError,
     EvaluationInvariantError,
@@ -22,6 +23,7 @@ from q_arbor.evaluation import (
 )
 from q_arbor.plugins.synthetic import (
     SyntheticSignalPlugin,
+    SyntheticSplitData,
     canonical_synthetic_candidate,
     make_synthetic_development_split,
     synthetic_contract_draft,
@@ -98,6 +100,169 @@ def test_synthetic_contract_helper_is_c7_valid_and_keeps_final_sealed() -> None:
         )
     assert mapping["data"]["splits"]["final"]["sealed"] is True
     assert mapping["data"]["splits"]["final"]["query_budget"] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "primary.name",
+        "primary.direction",
+        "primary.unit",
+        "primary.aggregation",
+        "constraints.list",
+        "constraint.name",
+        "constraint.operator",
+        "constraint.threshold",
+        "constraint.unit",
+        "diagnostics.shape",
+        "diagnostic.name",
+        "diagnostic.direction",
+        "diagnostic.unit",
+        "diagnostic.aggregation",
+        "metrics.admission_rule",
+        "development.time_range",
+        "data.point_in_time",
+        "cost_model.body",
+        "cost_model.sha256",
+        "cost_model.component_name",
+        "cost_model.rule",
+        "cost_model.currency",
+        "cost_model.execution_delay",
+    ],
+)
+def test_synthetic_factory_rejects_every_schema_valid_domain_contract_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    root = tmp_path / mutation.replace(".", "-")
+    plugin, identity, original, candidate, _ = validated_synthetic_components(root)
+    mapping = original.to_dict()
+    primary = mapping["metrics"]["primary"]
+    constraint = mapping["metrics"]["hard_constraints"][0]
+    diagnostic = mapping["metrics"]["diagnostics"][0]
+    if mutation == "primary.name":
+        primary["name"] = "alternate_net_return"
+    elif mutation == "primary.direction":
+        primary["direction"] = "minimize"
+    elif mutation == "primary.unit":
+        primary["unit"] = "ratio"
+    elif mutation == "primary.aggregation":
+        primary["aggregation"] = "mean_across_folds"
+    elif mutation == "constraints.list":
+        mapping["metrics"]["hard_constraints"] = []
+    elif mutation == "constraint.name":
+        constraint["name"] = "alternate_drawdown"
+    elif mutation == "constraint.operator":
+        constraint["operator"] = "lt"
+    elif mutation == "constraint.threshold":
+        constraint["threshold"] = 0.25
+    elif mutation == "constraint.unit":
+        constraint["unit"] = "ratio"
+    elif mutation == "diagnostics.shape":
+        mapping["metrics"]["diagnostics"] = []
+    elif mutation == "diagnostic.name":
+        diagnostic["name"] = "alternate_turnover"
+    elif mutation == "diagnostic.direction":
+        diagnostic["direction"] = "maximize"
+    elif mutation == "diagnostic.unit":
+        diagnostic["unit"] = "ratio"
+    elif mutation == "diagnostic.aggregation":
+        diagnostic["aggregation"] = "median_across_folds"
+    elif mutation == "metrics.admission_rule":
+        mapping["metrics"]["admission_rule"] = (
+            "schema-valid alternate synthetic admission rule"
+        )
+    elif mutation == "development.time_range":
+        mapping["data"]["splits"]["development"]["time_range"]["end"] = (
+            "2020-11-30T23:59:59Z"
+        )
+    elif mutation == "data.point_in_time":
+        mapping["data"]["point_in_time"]["asof_rule"] = (
+            "alternate schema-valid synthetic timing rule"
+        )
+    elif mutation == "cost_model.body":
+        mapping["cost_model"]["model_id"] = "synthetic.cost.v2"
+    elif mutation == "cost_model.sha256":
+        current = mapping["cost_model"]["sha256"]
+        mapping["cost_model"]["sha256"] = "0" * 64 if current != "0" * 64 else "1" * 64
+    elif mutation == "cost_model.component_name":
+        mapping["cost_model"]["components"][0]["name"] = "fees"
+    elif mutation == "cost_model.rule":
+        mapping["cost_model"]["components"][0]["rule"] = "0.002 per unit turnover"
+    elif mutation == "cost_model.currency":
+        mapping["cost_model"]["currency"] = "fraction"
+    elif mutation == "cost_model.execution_delay":
+        mapping["cost_model"]["execution_delay"] = "P2D"
+    else:  # pragma: no cover - closed parameters
+        raise AssertionError(f"unexpected mutation: {mutation}")
+
+    contract = freeze_contract(mapping)
+    assert contract.sha256 != original.sha256
+    validation = plugin.validate(candidate, contract)
+    receipt = bind_validation(
+        root / "mutated",
+        candidate=candidate,
+        validation=validation,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    assert isinstance(receipt, ValidatedCandidate)
+    request = make_request(contract, receipt, split_role="development")
+    runtime = runtime_fixture(root / "mutated", contract)
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    before = directory_entries(store_root)
+    calls = {"binding": 0, "view": 0, "scope": 0}
+
+    def forbidden_binding(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["binding"] += 1
+        raise AssertionError("synthetic drift reached binding construction")
+
+    def forbidden_view(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["view"] += 1
+        raise AssertionError("synthetic drift reached view construction")
+
+    def forbidden_scope(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls["scope"] += 1
+        raise AssertionError("synthetic drift reached artifact scope")
+
+    monkeypatch.setattr(EvaluationBinding, "create", forbidden_binding)
+    monkeypatch.setattr(SyntheticSplitData, "__init__", forbidden_view)
+    monkeypatch.setattr(ContentAddressedArtifactStore, "scope", forbidden_scope)
+    snapshots = (
+        contract.to_json(),
+        request.to_json(),
+        receipt.validation.to_json(),
+        candidate.payload,
+        plugin.identity.to_json(),
+    )
+
+    with pytest.raises(EvaluationIntegrityError):
+        make_synthetic_development_split(
+            request,
+            contract,
+            receipt,
+            plugin,
+            runtime.lock,
+            result_id="result.synthetic.domain-drift",
+            evaluation_seed=7,
+            artifact_store=store,
+            produced_by_event_id="event.synthetic.domain-drift",
+        )
+
+    assert calls == {"binding": 0, "view": 0, "scope": 0}
+    assert directory_entries(store_root) == before == ()
+    assert snapshots == (
+        contract.to_json(),
+        request.to_json(),
+        receipt.validation.to_json(),
+        candidate.payload,
+        plugin.identity.to_json(),
+    )
 
 
 @pytest.mark.parametrize("column", ["null_signal", "planted_signal"])
