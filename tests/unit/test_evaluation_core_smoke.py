@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from q_arbor.contracts import freeze_contract
+from q_arbor.contracts import QuantResearchContract, freeze_contract
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
@@ -37,6 +37,7 @@ from q_arbor.evaluation import (
     make_access_denied_result,
 )
 from q_arbor.evaluation import runtime as evaluation_runtime
+from q_arbor.evaluation.candidate import _classify_candidate_surface
 from q_arbor.evaluation.codec import decode_json_bytes, normalize_mapping
 from q_arbor.evaluation.results import _freeze_controlled_evaluation_result
 from tests.helpers import valid_contract_mapping
@@ -199,6 +200,78 @@ def _candidate_fixture(tmp_path: Path):
         plugin_identity=plugin,
     )
     return contract, plugin, candidate, receipt
+
+
+def _surface_candidate(
+    root: Path,
+    *,
+    artifact_path: str,
+    changed_paths: tuple[str, ...],
+    materialized_paths: tuple[str, ...],
+) -> tuple[QuantResearchContract, CandidateArtifact]:
+    contract = freeze_contract(valid_contract_mapping())
+    payload = b'{"candidate":"surface"}'
+    for path in materialized_paths:
+        destination = root.joinpath(*path.split("/"))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload if path == artifact_path else b"{}")
+    materialization = MaterializationReceipt.scan(root, materialized_paths)
+    artifact = ArtifactRef.from_mapping(
+        {
+            "artifact_id": "candidate.surface",
+            "kind": "python_strategy",
+            "relative_path": artifact_path,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    )
+    candidate = CandidateArtifact.from_bytes(
+        artifact,
+        payload,
+        code_commit="1" * 40,
+        changed_paths=changed_paths,
+        materialization=materialization,
+    )
+    return contract, candidate
+
+
+@pytest.mark.parametrize(
+    ("artifact_path", "changed_paths", "materialized_paths", "expected"),
+    [
+        (
+            "strategies/candidate.json",
+            ("evaluator/config.json", "strategies/candidate.json"),
+            ("evaluator/config.json", "strategies/candidate.json"),
+            "candidate.surface.protected",
+        ),
+        (
+            "strategies/candidate.json",
+            ("reports/result.json", "strategies/candidate.json"),
+            ("reports/result.json", "strategies/candidate.json"),
+            "candidate.surface.outside_editable",
+        ),
+        (
+            "strategies/other.json",
+            ("strategies/other.json",),
+            ("strategies/other.json",),
+            "candidate.surface.missing_output",
+        ),
+    ],
+)
+def test_candidate_surface_classifier_returns_bounded_reason_codes(
+    tmp_path: Path,
+    artifact_path: str,
+    changed_paths: tuple[str, ...],
+    materialized_paths: tuple[str, ...],
+    expected: str,
+) -> None:
+    contract, candidate = _surface_candidate(
+        tmp_path,
+        artifact_path=artifact_path,
+        changed_paths=changed_paths,
+        materialized_paths=materialized_paths,
+    )
+
+    assert _classify_candidate_surface(candidate, contract) == expected
 
 
 def test_materialization_candidate_validation_and_request_round_trip(

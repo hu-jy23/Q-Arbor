@@ -38,6 +38,7 @@ from .values import (
     EvaluationFailure,
     FamilyEvidence,
     PluginIdentity,
+    ReasonCode,
     _ImmutableJSON,
 )
 
@@ -381,6 +382,39 @@ class CandidateArtifact:
         return hash(self.candidate_hash)
 
 
+def _classify_candidate_surface_mapping(
+    candidate: CandidateArtifact,
+    contract_mapping: Mapping[str, JSONValue],
+) -> ReasonCode | None:
+    editable = cast(list[str], contract_mapping["editable_surface"])
+    protected = cast(list[str], contract_mapping["protected_paths"])
+    for path in candidate.changed_paths:
+        if any(fnmatch.fnmatch(path, pattern) for pattern in protected):
+            return ReasonCode.parse("candidate.surface.protected")
+        if not any(fnmatch.fnmatch(path, pattern) for pattern in editable):
+            return ReasonCode.parse("candidate.surface.outside_editable")
+    materialized = {
+        cast(str, entry["path"])
+        for entry in cast(
+            list[dict[str, JSONValue]], candidate.materialization.to_dict()["entries"]
+        )
+    }
+    if not set(cast(list[str], contract_mapping["required_outputs"])) <= materialized:
+        return ReasonCode.parse("candidate.surface.missing_output")
+    return None
+
+
+def _classify_candidate_surface(
+    candidate: CandidateArtifact,
+    contract: QuantResearchContract,
+) -> ReasonCode | None:
+    """Return a bounded pre-split surface failure for trusted plugin adapters."""
+
+    if not isinstance(candidate, CandidateArtifact):
+        raise EvaluationSchemaError("candidate must be a CandidateArtifact")
+    return _classify_candidate_surface_mapping(candidate, _contract_snapshot(contract))
+
+
 def _validate_candidate_surface(
     candidate: CandidateArtifact,
     contract_mapping: Mapping[str, JSONValue],
@@ -393,25 +427,9 @@ def _validate_candidate_surface(
         == plugin["artifact_type"]
     ):
         raise EvaluationInvariantError("candidate artifact kind differs from contract")
-    editable = cast(list[str], contract_mapping["editable_surface"])
-    protected = cast(list[str], contract_mapping["protected_paths"])
-    for path in candidate.changed_paths:
-        if not any(fnmatch.fnmatch(path, pattern) for pattern in editable):
-            raise EvaluationInvariantError(
-                "candidate change is outside editable surface"
-            )
-        if any(fnmatch.fnmatch(path, pattern) for pattern in protected):
-            raise EvaluationInvariantError(
-                "candidate change intersects protected surface"
-            )
-    materialized = {
-        cast(str, entry["path"])
-        for entry in cast(
-            list[dict[str, JSONValue]], candidate.materialization.to_dict()["entries"]
-        )
-    }
-    if not set(cast(list[str], contract_mapping["required_outputs"])) <= materialized:
-        raise EvaluationInvariantError("candidate is missing a required output")
+    failure = _classify_candidate_surface_mapping(candidate, contract_mapping)
+    if failure is not None:
+        raise EvaluationInvariantError(f"candidate surface failed: {failure}")
 
 
 class CandidateValidation(_ImmutableJSON):
