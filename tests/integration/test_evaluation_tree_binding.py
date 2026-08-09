@@ -8,15 +8,24 @@ from typing import Any
 
 import pytest
 
+from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     EvaluationIntegrityError,
+    EvaluationRequest,
+    PluginIdentity,
     ReasonCode,
     freeze_evaluation_result,
     make_access_denied_result,
     validate_evaluation_evidence,
 )
 from q_arbor.hypotheses import QuantHypothesisNode, freeze_node
-from tests.evaluation_helpers import synthetic_case
+from q_arbor.plugins.synthetic import SyntheticSignalPlugin
+from tests.evaluation_helpers import (
+    bind_validation,
+    make_request,
+    synthetic_case,
+    validated_synthetic_components,
+)
 from tests.hypothesis_helpers import valid_node_mapping, valid_tree_draft_mapping
 
 
@@ -42,11 +51,18 @@ def _running_node(case: Any, **updates: Any) -> QuantHypothesisNode:
     return freeze_node(mapping)
 
 
-def _scored_node(case: Any, score: float) -> QuantHypothesisNode:
+def _scored_node(
+    case: Any,
+    score: float,
+    *,
+    candidate_artifact_present: bool = True,
+) -> QuantHypothesisNode:
     mapping = copy.deepcopy(valid_tree_draft_mapping()["nodes"][1])
     mapping["id"] = case.request.node_id
     mapping["candidate_id"] = "candidate.qualification"
-    mapping["candidate_artifact"] = case.request.candidate.to_dict()
+    mapping["candidate_artifact"] = (
+        case.request.candidate.to_dict() if candidate_artifact_present else None
+    )
     mapping["attempt_ids"] = [case.request.attempt_id]
     mapping["score"] = score
     mapping["scope"]["data_snapshot_sha256"] = case.result.provenance[
@@ -77,6 +93,56 @@ def _evidence(case: Any, **updates: Any) -> dict[str, Any]:
     return mapping
 
 
+def _alternate_valid_request(
+    case: Any,
+    root: Path,
+    *,
+    mismatch: str,
+) -> EvaluationRequest:
+    if mismatch == "candidate_sha256":
+        _, _, contract, _, receipt = validated_synthetic_components(
+            root,
+            signal_column="null_signal",
+        )
+    else:
+        identity = case.identity
+        plugin = case.plugin
+        contract_mapping = case.contract.to_dict()
+        if mismatch == "contract_hash":
+            contract_mapping["objective"]["research_question"] += (
+                " Qualification identity variant."
+            )
+        elif mismatch == "plugin_code_sha256":
+            identity_mapping = identity.to_dict()
+            identity_mapping["code_sha256"] = "9" * 64
+            identity = PluginIdentity.from_mapping(identity_mapping)
+            plugin = SyntheticSignalPlugin.create(identity)
+            contract_mapping["plugin"] = identity.to_dict()
+        elif mismatch == "split_manifest_hash":
+            contract_mapping["data"]["splits"]["development"]["manifest_sha256"] = (
+                "8" * 64
+            )
+        else:  # pragma: no cover - closed test parameter set
+            raise AssertionError(f"unexpected mismatch: {mismatch}")
+        contract = freeze_contract(contract_mapping)
+        validation = plugin.validate(case.candidate, contract)
+        receipt = bind_validation(
+            root,
+            candidate=case.candidate,
+            validation=validation,
+            contract=contract,
+            plugin_identity=identity,
+        )
+    return make_request(
+        contract,
+        receipt,
+        split_role=case.request.split_role,
+        request_id=case.request.request_id,
+        node_id=case.request.node_id,
+        attempt_id=case.request.attempt_id,
+    )
+
+
 def test_c8_evidence_binding_succeeds_without_mutating_node_or_result(
     tmp_path: Path,
 ) -> None:
@@ -100,6 +166,62 @@ def test_c8_evidence_binding_succeeds_without_mutating_node_or_result(
     assert case.result.to_json() == result_before
     assert node.status == "running"
     assert node.score is None
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "candidate_sha256",
+        "contract_hash",
+        "plugin_code_sha256",
+        "split_manifest_hash",
+    ],
+)
+@pytest.mark.parametrize("candidate_artifact_present", [False, True])
+def test_c8_evidence_rejects_an_alternative_valid_request_identity(
+    tmp_path: Path,
+    mismatch: str,
+    candidate_artifact_present: bool,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    request = _alternate_valid_request(
+        case,
+        tmp_path / "alternate",
+        mismatch=mismatch,
+    )
+    node = _running_node(
+        case,
+        candidate_artifact=(
+            request.candidate.to_dict() if candidate_artifact_present else None
+        ),
+    )
+    evidence = _evidence(case)
+    request_identity = {
+        "candidate_sha256": request.candidate_hash,
+        "contract_hash": request.contract_hash,
+        "plugin_code_sha256": request.plugin.code_sha256,
+        "split_manifest_hash": request.split_manifest_hash,
+    }[mismatch]
+    assert request.request_id == case.request.request_id
+    assert request.split_role == case.request.split_role
+    assert request_identity != case.result.provenance[mismatch]
+    node_before = node.to_json()
+    result_before = case.result.to_json()
+    request_before = request.to_json()
+    evidence_before = copy.deepcopy(evidence)
+
+    with pytest.raises(EvaluationIntegrityError):
+        validate_evaluation_evidence(
+            case.result,
+            request=request,
+            node=node,
+            evidence=evidence,
+        )
+
+    assert node.to_json() == node_before
+    assert case.result.to_json() == result_before
+    assert request.to_json() == request_before
+    assert evidence == evidence_before
 
 
 @pytest.mark.parametrize(
@@ -223,8 +345,11 @@ def test_existing_node_score_must_equal_result_primary_exactly(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("score", [-0.00075, 0.0])
+@pytest.mark.parametrize("candidate_artifact_present", [False, True])
 def test_c8_evidence_accepts_finite_negative_and_zero_scores(
-    tmp_path: Path, score: float
+    tmp_path: Path,
+    score: float,
+    candidate_artifact_present: bool,
 ) -> None:
     case = synthetic_case(tmp_path / "case", signal_column="null_signal")
     if score == 0.0:
@@ -245,14 +370,27 @@ def test_c8_evidence_accepts_finite_negative_and_zero_scores(
             case,
             result=freeze_evaluation_result(mapping, binding=case.binding),
         )
-    node = _scored_node(case, score)
+    node = _scored_node(
+        case,
+        score,
+        candidate_artifact_present=candidate_artifact_present,
+    )
+    evidence = _evidence(case)
+    node_before = node.to_json()
+    result_before = case.result.to_json()
+    request_before = case.request.to_json()
+    evidence_before = copy.deepcopy(evidence)
 
     validate_evaluation_evidence(
         case.result,
         request=case.request,
         node=node,
-        evidence=_evidence(case),
+        evidence=evidence,
     )
+    assert node.to_json() == node_before
+    assert case.result.to_json() == result_before
+    assert case.request.to_json() == request_before
+    assert evidence == evidence_before
     assert node.score == score
 
 
