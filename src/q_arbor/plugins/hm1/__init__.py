@@ -127,7 +127,7 @@ def _count_or_none(value: object, field: str) -> int | None:
 class HM1EngineOutput:
     """Closed aggregate output; no command, path, row, or free-form detail exists."""
 
-    __slots__ = ("_canonical", "_mapping", "_sha256")
+    __slots__ = ("_canonical", "_initialized", "_mapping", "_sha256")
 
     def __init__(self) -> None:  # pragma: no cover - construction is closed
         raise TypeError("use HM1EngineOutput.from_mapping")
@@ -192,7 +192,13 @@ class HM1EngineOutput:
         object.__setattr__(instance, "_canonical", canonical)
         object.__setattr__(instance, "_mapping", normalized)
         object.__setattr__(instance, "_sha256", hashlib.sha256(canonical).hexdigest())
+        object.__setattr__(instance, "_initialized", True)
         return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("HM1EngineOutput is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def sha256(self) -> str:
@@ -235,6 +241,7 @@ class HM1SplitData:
     __slots__ = (
         "_data_snapshot_sha256",
         "_engine_output",
+        "_initialized",
         "_split_manifest_sha256",
         "_untrusted_failure_detail",
     )
@@ -247,10 +254,16 @@ class HM1SplitData:
         engine_output: HM1EngineOutput,
         untrusted_failure_detail: str | None = None,
     ) -> None:
-        self._data_snapshot_sha256 = data_snapshot_sha256
-        self._split_manifest_sha256 = split_manifest_sha256
-        self._engine_output = engine_output
-        self._untrusted_failure_detail = untrusted_failure_detail
+        object.__setattr__(self, "_data_snapshot_sha256", data_snapshot_sha256)
+        object.__setattr__(self, "_split_manifest_sha256", split_manifest_sha256)
+        object.__setattr__(self, "_engine_output", engine_output)
+        object.__setattr__(self, "_untrusted_failure_detail", untrusted_failure_detail)
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("HM1SplitData is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def role(self) -> str:
@@ -279,13 +292,24 @@ def _is_docstring(statement: ast.stmt) -> bool:
 
 
 def _is_json_scalar_assignment(statement: ast.stmt) -> bool:
-    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+    if isinstance(statement, ast.Assign):
+        if len(statement.targets) != 1 or not isinstance(
+            statement.targets[0], ast.Name
+        ):
+            return False
+        value = statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        if not isinstance(statement.target, ast.Name) or not statement.simple:
+            return False
         value = statement.value
     else:
         return False
-    return isinstance(value, ast.Constant) and (
-        value.value is None or isinstance(value.value, (str, int, float, bool))
-    )
+    if not isinstance(value, ast.Constant):
+        return False
+    scalar = value.value
+    if scalar is None or isinstance(scalar, (str, bool, int)):
+        return True
+    return isinstance(scalar, float) and math.isfinite(scalar)
 
 
 def _validate_import(statement: ast.Import | ast.ImportFrom) -> None:
@@ -398,16 +422,16 @@ def _validation_mapping(
     canonical_sha256: str | None,
     checks: list[dict[str, str]],
 ) -> dict[str, object]:
-    family = None
     failure = None
-    if canonical_sha256 is not None:
-        family = {
-            "family_hint": None,
-            "method": "exact-ast-v1",
-            "evidence_sha256": hashlib.sha256(
-                f"hm1:{canonical_sha256}".encode()
-            ).hexdigest(),
-        }
+    method = "exact-ast-v1" if canonical_sha256 is not None else "exact-bytes-v1"
+    evidence_basis = canonical_sha256 or candidate.artifact.sha256
+    family = {
+        "family_hint": None,
+        "method": method,
+        "evidence_sha256": hashlib.sha256(
+            f"hm1:{method}:{evidence_basis}".encode()
+        ).hexdigest(),
+    }
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
@@ -429,10 +453,15 @@ def _validation_mapping(
     }
 
 
+def _diagnostic_check_name(metric_name: str) -> str:
+    digest = hashlib.sha256(metric_name.encode("utf-8")).hexdigest()
+    return f"diagnostic.{digest[:16]}.observed"
+
+
 class HM1FuturesPlugin:
     """C9 HM1 adapter; real imports and evaluation remain behind C10."""
 
-    __slots__ = ("_identity",)
+    __slots__ = ("_identity", "_initialized")
 
     def __init__(self) -> None:  # pragma: no cover - construction is closed
         raise TypeError("use HM1FuturesPlugin.create")
@@ -443,7 +472,13 @@ class HM1FuturesPlugin:
             raise EvaluationPluginError("HM1 plugin artifact type mismatch")
         instance = cls.__new__(cls)
         object.__setattr__(instance, "_identity", identity)
+        object.__setattr__(instance, "_initialized", True)
         return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("HM1FuturesPlugin is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def identity(self) -> PluginIdentity:
@@ -452,6 +487,11 @@ class HM1FuturesPlugin:
     def validate(
         self, candidate: CandidateArtifact, contract: QuantResearchContract
     ) -> CandidateValidation:
+        if (
+            not isinstance(contract, QuantResearchContract)
+            or contract.to_dict()["task_kind"] != "futures_strategy"
+        ):
+            raise EvaluationIntegrityError("HM1 contract task kind mismatch")
         checks = [
             {
                 "name": "candidate.kind",
@@ -507,7 +547,39 @@ class HM1FuturesPlugin:
     def evaluate(self, candidate: ValidatedCandidate, split: Any) -> EvaluationResult:
         if not isinstance(split.data, HM1SplitData):
             raise EvaluationIntegrityError("HM1 split data type mismatch")
-        split.binding.runtime_lock.verify()
+        binding = split.binding
+        if candidate != binding.candidate_receipt:
+            raise EvaluationIntegrityError("HM1 candidate binding mismatch")
+        if (
+            split.request != binding.request
+            or split.contract.sha256 != binding.contract.sha256
+            or binding.plugin_identity != self.identity
+        ):
+            raise EvaluationIntegrityError("HM1 split binding mismatch")
+        contract = split.contract.to_dict()
+        development = contract["data"]["splits"]["development"]
+        if (
+            split.data.role != "development"
+            or split.request.split_role != "development"
+            or split.data.data_snapshot_sha256 != contract["data"]["snapshot_sha256"]
+            or split.data.split_manifest_sha256 != development["manifest_sha256"]
+            or split.request.split_manifest_hash != split.data.split_manifest_sha256
+        ):
+            raise EvaluationIntegrityError("HM1 development identity mismatch")
+        metrics = contract["metrics"]
+        if metrics["primary"]["name"] != "portfolio_daily_sharpe" or [
+            item["name"] for item in metrics["diagnostics"]
+        ] != [
+            "annualized_return",
+            "max_drawdown",
+            "calmar",
+            "win_rate",
+            "trade_count",
+            "coverage_count",
+            "expected_coverage_count",
+        ]:
+            raise EvaluationIntegrityError("HM1 metric contract mismatch")
+        binding.runtime_lock.verify()
         try:
             output = split.data.read_engine_output()
         # C5 G05 / C6 J04: never serialize an untrusted adapter exception.
@@ -568,7 +640,6 @@ class HM1FuturesPlugin:
                 output=output,
                 warnings=output.warning_codes,
             )
-        split.binding.runtime_lock.verify()
         return result
 
     def _failure_result(
@@ -613,16 +684,29 @@ class HM1FuturesPlugin:
             )
             for item in metrics["diagnostics"]
         )
-        checks = [
-            CheckResult.from_mapping(
-                {
-                    "name": name,
-                    "status": "not_observed",
-                    "evidence": "evaluation.not_observed",
-                }
+        observed_check_names = (
+            set()
+            if output is None
+            else {
+                _diagnostic_check_name(item["name"]) for item in metrics["diagnostics"]
+            }
+        )
+        checks = []
+        for name in split.binding.runtime_lock.required_check_names:
+            observed = name in observed_check_names
+            checks.append(
+                CheckResult.from_mapping(
+                    {
+                        "name": name,
+                        "status": "pass" if observed else "not_observed",
+                        "evidence": (
+                            "diagnostic.observed"
+                            if observed
+                            else "evaluation.not_observed"
+                        ),
+                    }
+                )
             )
-            for name in split.binding.runtime_lock.policy["required_check_names"]
-        ]
         if output is not None:
             coverage_status = (
                 "pass"

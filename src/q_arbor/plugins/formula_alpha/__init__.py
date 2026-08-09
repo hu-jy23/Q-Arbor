@@ -92,7 +92,7 @@ def _identifier(value: object, field: str) -> str:
 class PublicFormulaSchema:
     """Immutable, public field allowlist bound to ``contract.data.schema_sha256``."""
 
-    __slots__ = ("_canonical", "_fields", "_mapping", "_sha256")
+    __slots__ = ("_canonical", "_fields", "_initialized", "_mapping", "_sha256")
 
     def __init__(self) -> None:  # pragma: no cover - construction is closed
         raise TypeError("use PublicFormulaSchema.from_mapping")
@@ -135,7 +135,13 @@ class PublicFormulaSchema:
         object.__setattr__(instance, "_fields", frozenset(names))
         object.__setattr__(instance, "_mapping", MappingProxyType(payload))
         object.__setattr__(instance, "_sha256", hashlib.sha256(canonical).hexdigest())
+        object.__setattr__(instance, "_initialized", True)
         return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("PublicFormulaSchema is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -171,6 +177,7 @@ class FormulaAlphaSplitData:
 
     __slots__ = (
         "_data_snapshot_sha256",
+        "_initialized",
         "_outcome",
         "_split_manifest_sha256",
     )
@@ -182,9 +189,15 @@ class FormulaAlphaSplitData:
         split_manifest_sha256: str,
         outcome: FormulaMockOutcome,
     ) -> None:
-        self._data_snapshot_sha256 = data_snapshot_sha256
-        self._split_manifest_sha256 = split_manifest_sha256
-        self._outcome = FormulaMockOutcome(outcome)
+        object.__setattr__(self, "_data_snapshot_sha256", data_snapshot_sha256)
+        object.__setattr__(self, "_split_manifest_sha256", split_manifest_sha256)
+        object.__setattr__(self, "_outcome", FormulaMockOutcome(outcome))
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("FormulaAlphaSplitData is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def role(self) -> str:
@@ -268,15 +281,15 @@ def _candidate_validation_mapping(
     checks: list[dict[str, str]],
 ) -> dict[str, object]:
     failure = None
-    family = None
-    if canonical_sha256 is not None:
-        family = {
-            "family_hint": None,
-            "method": "exact-json-ast-v1",
-            "evidence_sha256": hashlib.sha256(
-                f"formula:{canonical_sha256}".encode()
-            ).hexdigest(),
-        }
+    method = "exact-json-ast-v1" if canonical_sha256 is not None else "exact-bytes-v1"
+    evidence_basis = canonical_sha256 or candidate.artifact.sha256
+    family = {
+        "family_hint": None,
+        "method": method,
+        "evidence_sha256": hashlib.sha256(
+            f"formula:{method}:{evidence_basis}".encode()
+        ).hexdigest(),
+    }
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
@@ -301,7 +314,7 @@ def _candidate_validation_mapping(
 class FormulaAlphaPlugin:
     """Formula candidate validator with no real backend or data access."""
 
-    __slots__ = ("_identity", "_public_schema")
+    __slots__ = ("_identity", "_initialized", "_public_schema")
 
     def __init__(self) -> None:  # pragma: no cover - construction is closed
         raise TypeError("use FormulaAlphaPlugin.create")
@@ -317,7 +330,13 @@ class FormulaAlphaPlugin:
         instance = cls.__new__(cls)
         object.__setattr__(instance, "_identity", identity)
         object.__setattr__(instance, "_public_schema", public_schema)
+        object.__setattr__(instance, "_initialized", True)
         return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("FormulaAlphaPlugin is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def identity(self) -> PluginIdentity:
@@ -330,6 +349,11 @@ class FormulaAlphaPlugin:
     def validate(
         self, candidate: CandidateArtifact, contract: QuantResearchContract
     ) -> CandidateValidation:
+        if (
+            not isinstance(contract, QuantResearchContract)
+            or contract.to_dict()["task_kind"] != "formula_alpha"
+        ):
+            raise EvaluationIntegrityError("formula contract task kind mismatch")
         contract_data = contract.to_dict()["data"]
         if not isinstance(contract_data, dict):  # frozen contract invariant
             raise EvaluationIntegrityError("contract data is unavailable")
@@ -392,11 +416,31 @@ class FormulaAlphaPlugin:
         data = split.data
         if not isinstance(data, FormulaAlphaSplitData):
             raise EvaluationIntegrityError("formula split data type mismatch")
+        binding = split.binding
+        if candidate != binding.candidate_receipt:
+            raise EvaluationIntegrityError("formula candidate binding mismatch")
+        if (
+            split.request != binding.request
+            or split.contract.sha256 != binding.contract.sha256
+            or binding.plugin_identity != self.identity
+        ):
+            raise EvaluationIntegrityError("formula split binding mismatch")
         contract = split.contract.to_dict()
+        development = contract["data"]["splits"]["development"]
+        if (
+            contract["data"]["schema_sha256"] != self.public_schema.sha256
+            or data.role != "development"
+            or split.request.split_role != "development"
+            or data.data_snapshot_sha256 != contract["data"]["snapshot_sha256"]
+            or data.split_manifest_sha256 != development["manifest_sha256"]
+            or split.request.split_manifest_hash != data.split_manifest_sha256
+        ):
+            raise EvaluationIntegrityError("formula development identity mismatch")
+        binding.runtime_lock.verify()
         primary_spec = contract["metrics"]["primary"]
         diagnostics = contract["metrics"]["diagnostics"]
         constraints = contract["metrics"]["hard_constraints"]
-        runtime_checks = split.binding.runtime_lock.policy["required_check_names"]
+        runtime_checks = split.binding.runtime_lock.required_check_names
         primary = MetricValue.from_mapping(
             {
                 "name": primary_spec["name"],

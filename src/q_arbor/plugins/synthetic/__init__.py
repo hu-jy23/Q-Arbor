@@ -306,11 +306,23 @@ def _strict_candidate(payload: bytes) -> tuple[str, bytes]:
 class SyntheticSplitData:
     """Fixed internal data view; rows are intentionally not serializable."""
 
-    __slots__ = ("_data_snapshot_sha256", "_split_manifest_sha256")
+    __slots__ = ("_data_snapshot_sha256", "_initialized", "_split_manifest_sha256")
 
     def __init__(self) -> None:
-        self._data_snapshot_sha256 = _FIXTURE_IDENTITIES["data_snapshot_sha256"]
-        self._split_manifest_sha256 = _FIXTURE_IDENTITIES["development_manifest_sha256"]
+        object.__setattr__(
+            self, "_data_snapshot_sha256", _FIXTURE_IDENTITIES["data_snapshot_sha256"]
+        )
+        object.__setattr__(
+            self,
+            "_split_manifest_sha256",
+            _FIXTURE_IDENTITIES["development_manifest_sha256"],
+        )
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("SyntheticSplitData is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def role(self) -> str:
@@ -334,16 +346,16 @@ def _validation_mapping(
     canonical_sha256: str | None,
     checks: list[dict[str, str]],
 ) -> dict[str, object]:
-    family = None
     failure = None
-    if canonical_sha256 is not None:
-        family = {
-            "family_hint": None,
-            "method": "exact-json-v1",
-            "evidence_sha256": hashlib.sha256(
-                f"synthetic:{canonical_sha256}".encode()
-            ).hexdigest(),
-        }
+    method = "exact-json-v1" if canonical_sha256 is not None else "exact-bytes-v1"
+    evidence_basis = canonical_sha256 or candidate.artifact.sha256
+    family = {
+        "family_hint": None,
+        "method": method,
+        "evidence_sha256": hashlib.sha256(
+            f"synthetic:{method}:{evidence_basis}".encode()
+        ).hexdigest(),
+    }
     if status != "valid":
         failure = {
             "failure_type": "invalid_candidate",
@@ -417,7 +429,7 @@ def _max_drawdown(signal: str) -> float:
 class SyntheticSignalPlugin:
     """Known-truth plugin whose only executable inputs are closed JSON signals."""
 
-    __slots__ = ("_identity",)
+    __slots__ = ("_identity", "_initialized")
 
     def __init__(self) -> None:  # pragma: no cover - construction is closed
         raise TypeError("use SyntheticSignalPlugin.create")
@@ -428,7 +440,13 @@ class SyntheticSignalPlugin:
             raise EvaluationPluginError("synthetic plugin artifact type mismatch")
         instance = cls.__new__(cls)
         object.__setattr__(instance, "_identity", identity)
+        object.__setattr__(instance, "_initialized", True)
         return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False):
+            raise AttributeError("SyntheticSignalPlugin is immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def identity(self) -> PluginIdentity:
@@ -437,6 +455,11 @@ class SyntheticSignalPlugin:
     def validate(
         self, candidate: CandidateArtifact, contract: QuantResearchContract
     ) -> CandidateValidation:
+        if (
+            not isinstance(contract, QuantResearchContract)
+            or contract.to_dict()["task_kind"] != "synthetic_factor"
+        ):
+            raise EvaluationIntegrityError("synthetic contract task kind mismatch")
         checks = [
             {
                 "name": "candidate.kind",
@@ -486,10 +509,28 @@ class SyntheticSignalPlugin:
     def evaluate(self, candidate: ValidatedCandidate, split: Any) -> EvaluationResult:
         if not isinstance(split.data, SyntheticSplitData):
             raise EvaluationIntegrityError("synthetic split data type mismatch")
-        split.binding.runtime_lock.verify()
+        binding = split.binding
+        if candidate != binding.candidate_receipt:
+            raise EvaluationIntegrityError("synthetic candidate binding mismatch")
+        if (
+            split.request != binding.request
+            or split.contract.sha256 != binding.contract.sha256
+            or binding.plugin_identity != self.identity
+        ):
+            raise EvaluationIntegrityError("synthetic split binding mismatch")
+        contract = split.contract.to_dict()
+        development = contract["data"]["splits"]["development"]
+        if (
+            split.data.role != "development"
+            or split.request.split_role != "development"
+            or split.data.data_snapshot_sha256 != contract["data"]["snapshot_sha256"]
+            or split.data.split_manifest_sha256 != development["manifest_sha256"]
+            or split.request.split_manifest_hash != split.data.split_manifest_sha256
+        ):
+            raise EvaluationIntegrityError("synthetic development identity mismatch")
+        binding.runtime_lock.verify()
         signal, _canonical = _strict_candidate(candidate.candidate.payload)
         observations = _fold_observations(signal)
-        contract = split.contract.to_dict()
         metrics = contract["metrics"]
         primary_spec = metrics["primary"]
         diagnostics_spec = metrics["diagnostics"]
@@ -560,7 +601,7 @@ class SyntheticSignalPlugin:
             CheckResult.from_mapping(
                 {"name": name, "status": "pass", "evidence": f"{name}.pass"}
             )
-            for name in split.binding.runtime_lock.policy["required_check_names"]
+            for name in split.binding.runtime_lock.required_check_names
         )
         costs = {
             "gross": float(gross),
@@ -590,7 +631,7 @@ class SyntheticSignalPlugin:
         else:
             failure = None
             status = "success"
-        result = split.make_result(
+        return split.make_result(
             status=status,
             primary_metric=primary,
             constraints=constraints,
@@ -602,8 +643,6 @@ class SyntheticSignalPlugin:
             failure=failure,
             warnings=(),
         )
-        split.binding.runtime_lock.verify()
-        return result
 
     def summarize(self, result: EvaluationResult) -> EvaluationSummary:
         return EvaluationSummary.from_result(result)
