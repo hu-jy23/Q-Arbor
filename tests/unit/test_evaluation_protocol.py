@@ -4,15 +4,14 @@ import copy
 import hashlib
 import inspect
 import json
-import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
-
-import q_arbor.evaluation as evaluation
 from q_arbor.evaluation import (
     ArtifactRef,
+    CandidateArtifact,
     CandidateReceipt,
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -21,6 +20,8 @@ from q_arbor.evaluation import (
     EvaluationInvariantError,
     EvaluationSchemaError,
     EvaluationSummary,
+    FoldPolicy,
+    MaterializationReceipt,
     QuantTaskPlugin,
     ValidatedCandidate,
     VerifiedRuntimeLock,
@@ -31,21 +32,19 @@ from q_arbor.evaluation import (
     validate_evaluation_request,
 )
 from q_arbor.plugins.formula_alpha import FormulaMockOutcome
+from q_arbor.plugins.synthetic import SyntheticSignalPlugin
+
+from q_arbor import evaluation
 from tests.evaluation_helpers import (
     artifact_ref_mapping,
-    bind_validation,
-    fixture_bytes,
     formula_case,
     hm1_case,
     invalid_synthetic_case,
     make_request,
-    materialize_candidate,
     plugin_identity_mapping,
     runtime_fixture,
-    sha256_bytes,
     synthetic_case,
     synthetic_contract,
-    synthetic_identity,
     validated_synthetic_components,
 )
 from tests.hypothesis_helpers import canonical_json
@@ -102,6 +101,7 @@ def test_evaluation_package_all_is_the_exact_frozen_public_surface() -> None:
     }
 
     assert set(evaluation.__all__) == expected
+    assert not hasattr(evaluation, "_freeze_controlled_evaluation_result")
 
 
 def test_frozen_public_function_parameter_names_and_keyword_boundaries() -> None:
@@ -262,6 +262,23 @@ def test_candidate_validation_binds_artifact_candidate_canonical_and_receipt_has
             plugin_identity=identity,
         )
 
+    changed_canonical = receipt.validation.to_dict()
+    changed_canonical["canonical_form_sha256"] = "e" * 64
+    changed_validation = evaluation.freeze_candidate_validation(
+        changed_canonical,
+        candidate=candidate,
+        contract=contract,
+        plugin_identity=identity,
+    )
+    with pytest.raises(EvaluationIntegrityError):
+        CandidateReceipt.bind(
+            candidate,
+            changed_validation,
+            receipt.receipt_ref,
+            contract=contract,
+            plugin_identity=identity,
+        )
+
 
 def test_validated_candidate_is_a_positive_witness_only(tmp_path: Path) -> None:
     _, identity, contract, candidate, invalid_receipt = invalid_synthetic_case(
@@ -278,7 +295,9 @@ def test_validated_candidate_is_a_positive_witness_only(tmp_path: Path) -> None:
         )
 
 
-def test_evaluation_request_round_trip_canonical_order_and_binding(tmp_path: Path) -> None:
+def test_evaluation_request_round_trip_canonical_order_and_binding(
+    tmp_path: Path,
+) -> None:
     _, _, contract, _, receipt = validated_synthetic_components(tmp_path / "case")
     request = make_request(contract, receipt)
     path = tmp_path / "request.json"
@@ -296,10 +315,7 @@ def test_evaluation_request_round_trip_canonical_order_and_binding(tmp_path: Pat
 
     expected_metric_names = [
         contract.to_dict()["metrics"]["primary"]["name"],
-        *(
-            item["name"]
-            for item in contract.to_dict()["metrics"]["diagnostics"]
-        ),
+        *(item["name"] for item in contract.to_dict()["metrics"]["diagnostics"]),
     ]
     assert loaded == validated == request
     assert request.requested_metrics == tuple(expected_metric_names)
@@ -357,10 +373,100 @@ def test_runtime_lock_is_canonical_complete_and_reverified(tmp_path: Path) -> No
     assert mapping["policy"] == runtime.config["policy"]
     assert runtime.lock.evaluator_sha256 == runtime.evaluator_ref.sha256
     assert runtime.lock.config_sha256 == runtime.config_ref.sha256
-    assert runtime.lock.sha256 == hashlib.sha256(
-        runtime.lock.to_json().encode("utf-8")
-    ).hexdigest()
+    assert (
+        runtime.lock.sha256
+        == hashlib.sha256(runtime.lock.to_json().encode("utf-8")).hexdigest()
+    )
     runtime.lock.verify()
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {
+            "mode": "required",
+            "expected_fold_ids": [],
+            "required_metric_names": ["mean_net_return"],
+        },
+        {
+            "mode": "aggregate_only",
+            "expected_fold_ids": ["fold.a"],
+            "required_metric_names": [],
+        },
+        {
+            "mode": "required",
+            "expected_fold_ids": ["fold.a", "fold.a"],
+            "required_metric_names": ["mean_net_return"],
+        },
+        {
+            "mode": "required",
+            "expected_fold_ids": ["fold.a"],
+            "required_metric_names": ["mean_net_return", "mean_net_return"],
+        },
+    ],
+)
+def test_fold_policy_modes_and_names_are_closed(mapping: dict[str, Any]) -> None:
+    with pytest.raises(EvaluationInvariantError):
+        FoldPolicy.from_mapping(mapping)
+
+
+def test_materialization_identity_is_relocation_safe_and_root_free(
+    tmp_path: Path,
+) -> None:
+    relative_paths = ("formulas/a.json", "formulas/b.json")
+    receipts = []
+    for root_name in ("first-root", "second-root"):
+        root = tmp_path / root_name
+        for index, relative_path in enumerate(relative_paths):
+            path = root.joinpath(*relative_path.split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"payload-{index}".encode())
+        receipts.append(MaterializationReceipt.scan(root, reversed(relative_paths)))
+
+    assert receipts[0] == receipts[1]
+    assert receipts[0].sha256 == receipts[1].sha256
+    assert [entry["path"] for entry in receipts[0].entries] == list(relative_paths)
+    serialized = receipts[0].to_json()
+    assert "first-root" not in serialized
+    assert "second-root" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+@pytest.mark.parametrize(
+    "changed_paths",
+    [
+        ("strategies/candidate.json", "strategies/candidate.json"),
+        ("strategies/z.json", "strategies/a.json"),
+    ],
+)
+def test_candidate_changed_paths_must_be_sorted_unique(
+    tmp_path: Path, changed_paths: tuple[str, ...]
+) -> None:
+    contract = synthetic_contract()
+    root = tmp_path / "candidate"
+    for relative_path in set(changed_paths) | {"strategies/candidate.json"}:
+        path = root.joinpath(*relative_path.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"{}")
+    receipt = MaterializationReceipt.scan(root, sorted(set(changed_paths)))
+    artifact = ArtifactRef.from_mapping(
+        artifact_ref_mapping(
+            artifact_id="candidate.changed_paths",
+            kind=contract.to_dict()["objective"]["candidate_artifact_type"],
+            relative_path="strategies/candidate.json",
+            payload=b"{}",
+            media_type="application/json",
+        )
+    )
+
+    with pytest.raises(EvaluationInvariantError):
+        CandidateArtifact.from_bytes(
+            artifact,
+            b"{}",
+            code_commit="0123456789abcdef0123456789abcdef01234567",
+            changed_paths=changed_paths,
+            materialization=receipt,
+        )
 
 
 @pytest.mark.parametrize("kind_target", ["evaluator", "config"])
@@ -400,7 +506,83 @@ def test_runtime_config_requires_strict_canonical_json(tmp_path: Path) -> None:
         )
     )
 
-    with pytest.raises(EvaluationInvariantError):
+    with pytest.raises(EvaluationIntegrityError):
+        VerifiedRuntimeLock.from_artifacts(
+            runtime.evaluator_ref,
+            changed_ref,
+            resolver=runtime.resolver,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (
+            lambda value: value.update(plugin_config={"api_token": "SECRET"}),
+            EvaluationBoundaryError,
+        ),
+        (
+            lambda value: value["policy"].update(
+                required_check_names=["split.identity", "candidate.identity"]
+            ),
+            EvaluationInvariantError,
+        ),
+        (
+            lambda value: value["policy"].update(
+                required_check_names=["candidate.identity", "candidate.identity"]
+            ),
+            EvaluationInvariantError,
+        ),
+        (
+            lambda value: value["policy"].update(
+                allowed_artifacts=[
+                    {
+                        "kind": "q-arbor.aggregate-metrics.v1",
+                        "media_type": "TEXT/PLAIN",
+                    }
+                ]
+            ),
+            EvaluationInvariantError,
+        ),
+        (
+            lambda value: value["policy"].update(
+                allowed_artifacts=[
+                    {
+                        "kind": "q-arbor.aggregate-metrics.v1",
+                        "media_type": "application/json",
+                    },
+                    {
+                        "kind": "q-arbor.aggregate-metrics.v1",
+                        "media_type": "application/json",
+                    },
+                ]
+            ),
+            EvaluationInvariantError,
+        ),
+    ],
+)
+def test_runtime_config_policy_is_closed_sorted_unique_and_secret_free(
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], None],
+    expected_error: type[Exception],
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path, contract)
+    mapping = copy.deepcopy(runtime.config)
+    mutate(mapping)
+    payload = canonical_json(mapping).encode("utf-8")
+    runtime.config_path.write_bytes(payload)
+    changed_ref = ArtifactRef.from_mapping(
+        artifact_ref_mapping(
+            artifact_id=runtime.config_ref.artifact_id,
+            kind=runtime.config_ref.kind,
+            relative_path=runtime.config_ref.relative_path,
+            payload=payload,
+            media_type="application/json",
+        )
+    )
+
+    with pytest.raises(expected_error):
         VerifiedRuntimeLock.from_artifacts(
             runtime.evaluator_ref,
             changed_ref,
@@ -424,7 +606,7 @@ def test_artifact_store_is_create_only_scoped_and_uses_hashed_request_namespace(
     ref = sink.put(
         kind="q-arbor.aggregate-metrics.v1",
         media_type="application/json",
-        content=b"{\"metric\":1}",
+        content=b'{"metric":1}',
     )
     namespace = hashlib.sha256(request_id.encode()).hexdigest()
 
@@ -438,7 +620,7 @@ def test_artifact_store_is_create_only_scoped_and_uses_hashed_request_namespace(
         request_id=request_id,
         runtime_lock_sha256=runtime.lock.sha256,
     )
-    assert store.read_bytes(ref) == b"{\"metric\":1}"
+    assert store.read_bytes(ref) == b'{"metric":1}'
 
 
 @pytest.mark.parametrize(
@@ -547,11 +729,108 @@ def test_artifact_store_rejects_post_issuance_symlink_swap(tmp_path: Path) -> No
         )
 
 
+def test_artifact_store_rejects_symlinked_artifacts_parent_before_external_write(
+    tmp_path: Path,
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    root = tmp_path / "store"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "artifacts").symlink_to(outside, target_is_directory=True)
+    store = ContentAddressedArtifactStore.create(root)
+
+    with pytest.raises(EvaluationBoundaryError):
+        store.scope(
+            request_id="request.artifact",
+            produced_by_event_id="event.artifact",
+            runtime_lock=runtime.lock,
+        )
+
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("sidecar_name", [".issued", ".scope.json"])
+def test_artifact_store_rejects_preexisting_sidecar_symlink(
+    tmp_path: Path, sidecar_name: str
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    root = tmp_path / "store"
+    outside = tmp_path / "outside"
+    namespace = hashlib.sha256(b"request.artifact").hexdigest()
+    sidecar = root / "artifacts" / "evaluations" / namespace / sidecar_name
+    sidecar.parent.mkdir(parents=True)
+    outside.mkdir()
+    if sidecar_name == ".issued":
+        sidecar.symlink_to(outside, target_is_directory=True)
+    else:
+        outside_file = outside / "scope.json"
+        outside_file.write_text('{"forged":true}', encoding="utf-8")
+        sidecar.symlink_to(outside_file)
+    with pytest.raises(EvaluationBoundaryError):
+        store = ContentAddressedArtifactStore.create(root)
+        store.scope(
+            request_id="request.artifact",
+            produced_by_event_id="event.artifact",
+            runtime_lock=runtime.lock,
+        )
+
+    expected = [] if sidecar_name == ".issued" else [outside / "scope.json"]
+    assert list(outside.iterdir()) == expected
+
+
+def test_artifact_store_never_follows_a_swapped_issuance_record(
+    tmp_path: Path,
+) -> None:
+    contract = synthetic_contract()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    root = tmp_path / "store"
+    store = ContentAddressedArtifactStore.create(root)
+    sink = store.scope(
+        request_id="request.artifact",
+        produced_by_event_id="event.artifact",
+        runtime_lock=runtime.lock,
+    )
+    ref = sink.put(
+        kind="q-arbor.aggregate-metrics.v1",
+        media_type="application/json",
+        content=b"safe",
+    )
+    issuance_records = [
+        path for path in root.rglob("*") if path.is_file() and ".issued" in path.parts
+    ]
+    assert len(issuance_records) == 1
+    record = issuance_records[0]
+    outside = tmp_path / "outside-record.json"
+    outside.write_text('{"forged":true}', encoding="utf-8")
+    record.unlink()
+    record.symlink_to(outside)
+
+    with pytest.raises(EvaluationBoundaryError):
+        store.verify_issued(
+            ref,
+            request_id="request.artifact",
+            runtime_lock_sha256=runtime.lock.sha256,
+        )
+
+    assert outside.read_text(encoding="utf-8") == '{"forged":true}'
+
+
 @pytest.mark.parametrize(
-    "identifier",
-    ["identifier\n", "a" * 161, "contains space", "/absolute", "café"],
+    ("identifier", "expected_error"),
+    [
+        ("identifier\n", EvaluationInvariantError),
+        ("a" * 161, EvaluationSchemaError),
+        ("contains space", EvaluationSchemaError),
+        ("/absolute", EvaluationSchemaError),
+        ("café", EvaluationSchemaError),
+    ],
 )
-def test_identifiers_are_runtime_fullmatched(identifier: str) -> None:
+def test_identifiers_are_runtime_fullmatched(
+    identifier: str, expected_error: type[Exception]
+) -> None:
     mapping = artifact_ref_mapping(
         artifact_id=identifier,
         kind="q-arbor.aggregate-metrics.v1",
@@ -560,20 +839,75 @@ def test_identifiers_are_runtime_fullmatched(identifier: str) -> None:
         media_type="application/json",
     )
 
-    with pytest.raises(EvaluationSchemaError):
+    with pytest.raises(expected_error):
         ArtifactRef.from_mapping(mapping)
 
 
 def test_plugin_identity_fullmatches_hashes_and_identifier(tmp_path: Path) -> None:
     from q_arbor.evaluation import PluginIdentity
 
-    for field, value in (
-        ("name", "plugin\n"),
-        ("code_sha256", "a" * 64 + "\n"),
-        ("code_sha256", "A" * 64),
+    for field, value, expected_error in (
+        ("name", "plugin\n", EvaluationInvariantError),
+        ("code_sha256", "a" * 64 + "\n", EvaluationInvariantError),
+        ("code_sha256", "A" * 64, EvaluationSchemaError),
     ):
         mapping = plugin_identity_mapping()
         mapping[field] = value
-        with pytest.raises(EvaluationSchemaError):
+        with pytest.raises(expected_error):
             PluginIdentity.from_mapping(mapping)
     assert tmp_path.exists()
+
+
+def test_candidate_artifact_kind_mismatch_is_invalid_before_split(
+    tmp_path: Path,
+) -> None:
+    plugin, _, contract, candidate, _ = validated_synthetic_components(
+        tmp_path / "case"
+    )
+    mapping = candidate.artifact.to_dict()
+    mapping["kind"] = "q-arbor.wrong-candidate-kind.v1"
+    wrong_ref = ArtifactRef.from_mapping(mapping)
+    wrong_candidate = CandidateArtifact.from_bytes(
+        wrong_ref,
+        candidate.payload,
+        code_commit=candidate.code_commit,
+        changed_paths=candidate.changed_paths,
+        materialization=candidate.materialization,
+    )
+
+    validation = plugin.validate(wrong_candidate, contract)
+
+    assert validation.status == "invalid_candidate"
+    assert validation.failure.failure_type == "invalid_candidate"
+
+
+def test_live_plugin_identity_drift_is_integrity_error_before_validation(
+    tmp_path: Path,
+) -> None:
+    _, _, contract, candidate, _ = validated_synthetic_components(tmp_path / "case")
+    wrong_identity_mapping = plugin_identity_mapping(code_sha256="f" * 64)
+    from q_arbor.evaluation import PluginIdentity
+
+    wrong_plugin = SyntheticSignalPlugin.create(
+        PluginIdentity.from_mapping(wrong_identity_mapping)
+    )
+
+    with pytest.raises(EvaluationIntegrityError):
+        wrong_plugin.validate(candidate, contract)
+
+
+def test_contract_task_kind_mismatch_is_integrity_error_before_validation(
+    tmp_path: Path,
+) -> None:
+    plugin, _, contract, candidate, _ = validated_synthetic_components(
+        tmp_path / "case"
+    )
+    mapping = contract.to_dict()
+    mapping.pop("contract_hash")
+    mapping["task_kind"] = "formula_alpha"
+    from q_arbor.contracts import freeze_contract
+
+    wrong_contract = freeze_contract(mapping)
+
+    with pytest.raises(EvaluationIntegrityError):
+        plugin.validate(candidate, wrong_contract)

@@ -4,16 +4,14 @@ import copy
 import hashlib
 import inspect
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
-
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
-    CandidateReceipt,
-    EvaluationBinding,
     EvaluationBoundaryError,
     EvaluationIntegrityError,
     EvaluationInvariantError,
@@ -28,6 +26,7 @@ from q_arbor.evaluation import (
     validate_evaluation_result,
 )
 from q_arbor.plugins.synthetic import make_synthetic_development_split
+
 from tests.evaluation_helpers import (
     CODE_COMMIT,
     artifact_ref_mapping,
@@ -40,7 +39,6 @@ from tests.evaluation_helpers import (
     make_request,
     materialize_candidate,
     runtime_fixture,
-    sha256_bytes,
     synthetic_case,
     validated_synthetic_components,
 )
@@ -188,9 +186,13 @@ def test_invalid_candidate_terminal_is_exact_and_never_constructs_a_split(
     assert plugin.identity == identity
 
 
-def test_validation_implementation_failure_maps_to_exact_terminal(tmp_path: Path) -> None:
+def test_validation_implementation_failure_maps_to_exact_terminal(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "case"
-    plugin, identity, contract, candidate, invalid_receipt = invalid_synthetic_case(root)
+    plugin, identity, contract, candidate, invalid_receipt = invalid_synthetic_case(
+        root
+    )
     mapping = invalid_receipt.validation.to_dict()
     mapping["status"] = "implementation_failure"
     mapping["failure"] = {
@@ -273,7 +275,9 @@ def test_access_denied_factory_is_zero_call_and_opens_no_split_or_artifact(
     assert "split" not in inspect.signature(make_access_denied_result).parameters
 
 
-def test_terminal_factories_reject_inapplicable_candidate_status(tmp_path: Path) -> None:
+def test_terminal_factories_reject_inapplicable_candidate_status(
+    tmp_path: Path,
+) -> None:
     _, _, _, _, _, _, valid_binding = _terminal_binding(tmp_path / "valid")
     _, identity, contract, _, invalid_receipt = invalid_synthetic_case(
         tmp_path / "invalid"
@@ -424,6 +428,46 @@ def test_non_success_cannot_smuggle_score_fold_or_success_evidence(
 @pytest.mark.parametrize(
     "mutation",
     [
+        lambda value: value["primary_metric"].update(value=0.1),
+        lambda value: value["fold_metrics"].append(
+            {
+                "fold_id": "fold.a",
+                "time_range": "2020-01-01/2020-01-31",
+                "metrics": [],
+            }
+        ),
+        lambda value: value["artifacts"].append(
+            {
+                "artifact_id": "artifact.suspect",
+                "kind": "q-arbor.aggregate-metrics.v1",
+                "relative_path": "artifacts/evaluations/suspect.json",
+                "sha256": "a" * 64,
+                "media_type": "application/json",
+            }
+        ),
+        lambda value: value.update(warnings=["warning.suspect"]),
+        lambda value: value["failure"].update(failure_type="evaluation_failure"),
+    ],
+)
+def test_contaminated_terminal_cannot_retain_any_suspect_observation(
+    tmp_path: Path, mutation: Callable[[dict[str, Any]], None]
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    mapping = make_access_denied_result(
+        binding=case.binding,
+        reason_code=ReasonCode.parse("runtime.drift"),
+    ).to_dict()
+    mapping["status"] = "contaminated"
+    mapping["failure"]["failure_type"] = "contamination"
+    mutation(mapping)
+
+    with pytest.raises(EvaluationInvariantError):
+        freeze_evaluation_result(mapping, binding=case.binding)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
         lambda value: value["primary_metric"].update(value=None),
         lambda value: value.update(
             failure={
@@ -451,6 +495,7 @@ def test_success_requires_complete_finite_passing_observations(
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [
+        ("result_id", "result.forged"),
         ("request_id", "request.forged"),
         ("split_role", "gate"),
     ],
@@ -510,9 +555,13 @@ def test_missing_provenance_is_schema_error_for_failure_too(tmp_path: Path) -> N
         lambda value: value["primary_metric"].update(direction="minimize"),
         lambda value: value["primary_metric"].update(unit="wrong"),
         lambda value: value["diagnostics"].clear(),
-        lambda value: value["diagnostics"].append(copy.deepcopy(value["diagnostics"][0])),
+        lambda value: value["diagnostics"].append(
+            copy.deepcopy(value["diagnostics"][0])
+        ),
         lambda value: value["constraints"].clear(),
-        lambda value: value["constraints"].append(copy.deepcopy(value["constraints"][0])),
+        lambda value: value["constraints"].append(
+            copy.deepcopy(value["constraints"][0])
+        ),
     ],
 )
 def test_metric_and_constraint_declarations_are_exact(
@@ -532,9 +581,7 @@ def test_metric_and_constraint_declarations_are_exact(
         lambda value: value["fold_metrics"].append(
             copy.deepcopy(value["fold_metrics"][0])
         ),
-        lambda value: value.update(
-            fold_metrics=list(reversed(value["fold_metrics"]))
-        ),
+        lambda value: value.update(fold_metrics=list(reversed(value["fold_metrics"]))),
         lambda value: value["fold_metrics"][0].update(
             time_range="2020-12-31/2020-01-01"
         ),
@@ -580,7 +627,9 @@ def test_costs_are_exact_finite_and_reconciled(
         freeze_evaluation_result(mapping, binding=case.binding)
 
 
-def test_c9_rejects_statistical_diagnostics_and_duplicate_warnings(tmp_path: Path) -> None:
+def test_c9_rejects_statistical_diagnostics_and_duplicate_warnings(
+    tmp_path: Path,
+) -> None:
     case = synthetic_case(tmp_path / "case")
     statistical = case.result.to_dict()
     statistical["statistical_diagnostics"] = [
@@ -611,7 +660,9 @@ def test_c9_rejects_statistical_diagnostics_and_duplicate_warnings(tmp_path: Pat
 def test_request_rejects_manifest_candidate_receipt_and_plugin_identity_drift(
     tmp_path: Path,
 ) -> None:
-    _, identity, contract, _, receipt = validated_synthetic_components(tmp_path / "case")
+    _, identity, contract, _, receipt = validated_synthetic_components(
+        tmp_path / "case"
+    )
     valid = make_request(contract, receipt).to_dict()
     mutations = []
     wrong_manifest = copy.deepcopy(valid)
@@ -637,7 +688,9 @@ def test_request_rejects_manifest_candidate_receipt_and_plugin_identity_drift(
     assert identity == receipt.plugin_identity
 
 
-def test_candidate_hash_has_independent_exact_three_identity_oracle(tmp_path: Path) -> None:
+def test_candidate_hash_has_independent_exact_three_identity_oracle(
+    tmp_path: Path,
+) -> None:
     _, _, _, candidate, _ = validated_synthetic_components(tmp_path / "case")
     expected_payload = {
         "schema_version": "1.0",
@@ -725,6 +778,26 @@ def test_artifact_paths_are_literal_and_bounded(
         ArtifactRef.from_mapping(mapping)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "segment-" + "x" * 248 + ".json",
+        "/".join(["segment"] * 600) + ".json",
+    ],
+)
+def test_artifact_path_segment_and_total_utf8_limits_are_enforced(path: str) -> None:
+    mapping = artifact_ref_mapping(
+        artifact_id="artifact.long_path",
+        kind="q-arbor.aggregate-metrics.v1",
+        relative_path=path,
+        payload=b"{}",
+        media_type="application/json",
+    )
+
+    with pytest.raises(EvaluationInvariantError):
+        ArtifactRef.from_mapping(mapping)
+
+
 def test_changed_protected_path_is_invalid_before_evaluation(tmp_path: Path) -> None:
     root = tmp_path / "case"
     plugin, identity, contract, _, _ = validated_synthetic_components(root / "valid")
@@ -789,9 +862,7 @@ def test_first_post_execution_runtime_drift_returns_contaminated(
         runtime.evaluator_ref if runtime_part == "evaluator" else runtime.config_ref
     )
     target_path = (
-        runtime.evaluator_path
-        if runtime_part == "evaluator"
-        else runtime.config_path
+        runtime.evaluator_path if runtime_part == "evaluator" else runtime.config_path
     )
     flipped = False
 
@@ -835,7 +906,7 @@ def test_issued_artifact_is_bound_to_complete_runtime_lock(tmp_path: Path) -> No
     ref = sink.put(
         kind="q-arbor.aggregate-metrics.v1",
         media_type="application/json",
-        content=b"{\"safe\":true}",
+        content=b'{"safe":true}',
     )
 
     store.verify_issued(
@@ -852,3 +923,79 @@ def test_issued_artifact_is_bound_to_complete_runtime_lock(tmp_path: Path) -> No
     assert runtime_a.lock.config_sha256 == runtime_b.lock.config_sha256
     assert runtime_a.lock.sha256 != runtime_b.lock.sha256
     assert identity == receipt.plugin_identity
+
+
+def test_result_cannot_replay_an_artifact_issued_under_another_runtime_lock(
+    tmp_path: Path,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    if case.result.artifacts:
+        issued_ref = case.result.artifacts[0]
+    else:
+        sink = case.store.scope(
+            request_id=case.request.request_id,
+            produced_by_event_id="event.evaluation.synthetic",
+            runtime_lock=case.runtime.lock,
+        )
+        issued_ref = sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=b'{"cross_lock":true}',
+        )
+    runtime_b = runtime_fixture(
+        tmp_path / "runtime-b",
+        case.contract,
+        evaluator_payload=b"replacement runtime\n",
+    )
+    binding_b = make_binding(
+        request=case.request,
+        contract=case.contract,
+        receipt=case.receipt,
+        plugin_identity=case.identity,
+        runtime_lock=runtime_b.lock,
+        artifact_resolver=case.store,
+        result_id=case.result.result_id,
+    )
+    mapping = case.result.to_dict()
+    mapping["artifacts"] = [issued_ref.to_dict()]
+    mapping["provenance"]["evaluator_sha256"] = runtime_b.lock.evaluator_sha256
+    mapping["provenance"]["config_sha256"] = runtime_b.lock.config_sha256
+
+    with pytest.raises(EvaluationIntegrityError):
+        freeze_evaluation_result(mapping, binding=binding_b)
+
+
+def test_result_artifacts_are_unique_and_canonically_ordered(tmp_path: Path) -> None:
+    case = synthetic_case(tmp_path / "case")
+    sink = case.store.scope(
+        request_id=case.request.request_id,
+        produced_by_event_id="event.evaluation.synthetic",
+        runtime_lock=case.runtime.lock,
+    )
+    refs = [
+        sink.put(
+            kind="q-arbor.aggregate-metrics.v1",
+            media_type="application/json",
+            content=content,
+        )
+        for content in (b'{"value":1}', b'{"value":2}')
+    ]
+    reverse = sorted(
+        (ref.to_dict() for ref in refs),
+        key=lambda item: (item["artifact_id"], item["relative_path"]),
+        reverse=True,
+    )
+    mapping = case.result.to_dict()
+    mapping["artifacts"] = reverse
+
+    frozen = freeze_evaluation_result(mapping, binding=case.binding)
+    assert [(ref.artifact_id, ref.relative_path) for ref in frozen.artifacts] == sorted(
+        (ref.artifact_id, ref.relative_path) for ref in refs
+    )
+    with pytest.raises(EvaluationInvariantError):
+        validate_evaluation_result(mapping, binding=case.binding)
+
+    duplicate = case.result.to_dict()
+    duplicate["artifacts"] = [refs[0].to_dict(), refs[0].to_dict()]
+    with pytest.raises(EvaluationInvariantError):
+        freeze_evaluation_result(duplicate, binding=case.binding)

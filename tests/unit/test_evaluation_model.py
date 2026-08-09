@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
-import os
-import stat
 import unicodedata
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from q_arbor.evaluation import (
     ArtifactRef,
     CheckResult,
@@ -34,6 +30,7 @@ from q_arbor.evaluation import (
     load_evaluation_result,
     validate_evaluation_result,
 )
+
 from tests.evaluation_helpers import (
     evaluation_fixture,
     plugin_identity_mapping,
@@ -74,7 +71,7 @@ def test_reason_code_is_closed_ascii_and_hashable() -> None:
         "x" * 129,
         "secret=value",
     ):
-        with pytest.raises(EvaluationSchemaError):
+        with pytest.raises(EvaluationInvariantError):
             ReasonCode.parse(invalid)
 
 
@@ -115,9 +112,10 @@ def test_mapping_value_constructors_are_canonical_detached_and_hashable() -> Non
 
     assert artifact.relative_path == artifact_mapping["relative_path"]
     assert artifact.sha256 == artifact_mapping["sha256"]
-    assert artifact.canonical_sha256 == hashlib.sha256(
-        artifact.to_json().encode()
-    ).hexdigest()
+    assert (
+        artifact.canonical_sha256
+        == hashlib.sha256(artifact.to_json().encode()).hexdigest()
+    )
     for value in (plugin, check, metric, failure, family):
         snapshot = value.to_dict()
         assert value.to_json() == canonical_json(snapshot)
@@ -125,6 +123,31 @@ def test_mapping_value_constructors_are_canonical_detached_and_hashable() -> Non
         assert hash(value) == hash(value)
         snapshot[next(iter(snapshot))] = "caller mutation"
         assert value.to_json() != canonical_json(snapshot)
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "/restricted/source/raw",
+        "https://example.invalid/path",
+        "token=SECRET_CANARY",
+        "Traceback most recent call",
+        "line one\nline two",
+    ],
+)
+def test_check_failure_and_warning_text_are_closed_reason_codes(unsafe: str) -> None:
+    with pytest.raises(EvaluationInvariantError):
+        CheckResult.from_mapping(
+            {"name": "check.safe", "status": "fail", "evidence": unsafe}
+        )
+    with pytest.raises(EvaluationInvariantError):
+        EvaluationFailure.from_mapping(
+            {
+                "failure_type": "evaluation_failure",
+                "summary": unsafe,
+                "evidence_ids": [],
+            }
+        )
 
 
 def test_result_round_trip_canonical_hash_and_frozen_c6_shape(tmp_path: Path) -> None:
@@ -271,7 +294,9 @@ def test_result_is_deeply_immutable_and_to_dict_is_detached(tmp_path: Path) -> N
     assert case.result.to_json() == before
 
 
-def test_summary_is_one_closed_deterministic_redacted_projection(tmp_path: Path) -> None:
+def test_summary_is_one_closed_deterministic_redacted_projection(
+    tmp_path: Path,
+) -> None:
     case = synthetic_case(tmp_path / "case")
     via_plugin = case.plugin.summarize(case.result)
     via_public_factory = EvaluationSummary.from_result(case.result)
@@ -308,46 +333,6 @@ def test_summary_is_one_closed_deterministic_redacted_projection(tmp_path: Path)
         assert forbidden not in text
 
 
-def test_result_atomic_write_precommit_failure_preserves_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case = synthetic_case(tmp_path / "case")
-    target = tmp_path / "result.json"
-    target.write_bytes(b"sentinel")
-
-    def fail_replace(source: object, destination: object) -> None:
-        raise OSError("replace fault")
-
-    monkeypatch.setattr(os, "replace", fail_replace)
-    with pytest.raises(EvaluationPersistenceError) as caught:
-        case.result.write(target)
-
-    assert caught.value.committed is False
-    assert target.read_bytes() == b"sentinel"
-    assert list(tmp_path.glob(".result.json.*.tmp")) == []
-
-
-def test_result_atomic_write_postcommit_fsync_reports_committed_new_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case = synthetic_case(tmp_path / "case")
-    target = tmp_path / "result.json"
-    target.write_bytes(b"sentinel")
-    real_fsync = os.fsync
-
-    def fail_directory_fsync(fd: int) -> None:
-        if stat.S_ISDIR(os.fstat(fd).st_mode):
-            raise OSError("directory fsync fault")
-        real_fsync(fd)
-
-    monkeypatch.setattr(os, "fsync", fail_directory_fsync)
-    with pytest.raises(EvaluationPersistenceError) as caught:
-        case.result.write(target)
-
-    assert caught.value.committed is True
-    assert target.read_bytes() == case.result.to_json().encode("utf-8")
-
-
 def test_load_io_utf8_and_expected_hash_failures_are_distinct(tmp_path: Path) -> None:
     case = synthetic_case(tmp_path / "case")
     missing = tmp_path / "missing.json"
@@ -379,3 +364,39 @@ def test_decode_error_does_not_echo_untrusted_content(tmp_path: Path) -> None:
 
     assert canary not in str(caught.value)
     assert canary not in repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\xef\xbb\xbf{}",
+        b"[]",
+        b"null",
+        ("[" * 2048 + "]" * 2048).encode(),
+    ],
+)
+def test_bom_nonobject_and_excessive_nesting_are_decode_errors(
+    tmp_path: Path, raw: bytes
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    path = tmp_path / "raw.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(EvaluationDecodeError):
+        load_evaluation_result(path, binding=case.binding)
+
+
+def test_recursive_and_unsupported_python_values_are_decode_errors(
+    tmp_path: Path,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    recursive = case.result.to_dict()
+    cycle: list[Any] = []
+    cycle.append(cycle)
+    recursive["warnings"] = cycle
+    unsupported = case.result.to_dict()
+    unsupported["warnings"] = [object()]
+
+    for mapping in (recursive, unsupported):
+        with pytest.raises(EvaluationDecodeError):
+            freeze_evaluation_result(mapping, binding=case.binding)

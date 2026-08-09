@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from q_arbor.evaluation import (
-    CandidateArtifact,
+    ContentAddressedArtifactStore,
+    EvaluationBoundaryError,
     EvaluationInvariantError,
     QuantTaskPlugin,
     ValidatedCandidate,
@@ -19,17 +19,23 @@ from q_arbor.evaluation import (
 from q_arbor.plugins.synthetic import (
     SyntheticSignalPlugin,
     canonical_synthetic_candidate,
+    make_synthetic_development_split,
     synthetic_contract_draft,
     synthetic_fixture_identities,
 )
+
 from tests.evaluation_helpers import (
     REPOSITORY_ROOT,
+    directory_entries,
     fixture_bytes,
     invalid_synthetic_case,
+    make_request,
     materialize_candidate,
+    runtime_fixture,
     synthetic_case,
     synthetic_contract,
     synthetic_identity,
+    validated_synthetic_components,
 )
 
 
@@ -53,13 +59,16 @@ def test_synthetic_public_fixture_identities_are_exact_closed_opaque_hashes() ->
         len(value) == 64 and value == value.lower() and int(value, 16) >= 0
         for value in identities.values()
     )
-    assert len(
-        {
-            identities["development_manifest_sha256"],
-            identities["gate_manifest_sha256"],
-            identities["final_manifest_sha256"],
-        }
-    ) == 3
+    assert (
+        len(
+            {
+                identities["development_manifest_sha256"],
+                identities["gate_manifest_sha256"],
+                identities["final_manifest_sha256"],
+            }
+        )
+        == 3
+    )
     assert all("/" not in value and "\\" not in value for value in identities.values())
 
 
@@ -79,15 +88,16 @@ def test_synthetic_contract_helper_is_c7_valid_and_keeps_final_sealed() -> None:
     assert mapping["data"]["snapshot_sha256"] == identities["data_snapshot_sha256"]
     assert mapping["data"]["schema_sha256"] == identities["data_schema_sha256"]
     for role in ("development", "gate", "final"):
-        assert mapping["data"]["splits"][role]["manifest_sha256"] == identities[
-            f"{role}_manifest_sha256"
-        ]
+        assert (
+            mapping["data"]["splits"][role]["manifest_sha256"]
+            == identities[f"{role}_manifest_sha256"]
+        )
     assert mapping["data"]["splits"]["final"]["sealed"] is True
     assert mapping["data"]["splits"]["final"]["query_budget"] == 1
 
 
 @pytest.mark.parametrize("column", ["null_signal", "planted_signal"])
-def test_canonical_synthetic_candidate_has_exact_six_token_shape(column: str) -> None:
+def test_canonical_synthetic_candidate_has_exact_closed_shape(column: str) -> None:
     payload = canonical_synthetic_candidate(signal_column=column)
 
     assert payload == fixture_bytes(
@@ -137,7 +147,9 @@ def test_semantically_equal_candidate_encodings_share_only_canonical_form(
     plugin = SyntheticSignalPlugin.create(identity)
     contract = synthetic_contract(identity)
     canonical = canonical_synthetic_candidate(signal_column="planted_signal")
-    shuffled = b'{"signal_column":"planted_signal","kind":"signal","schema_version":"1.0"}'
+    shuffled = (
+        b'{"signal_column":"planted_signal","kind":"signal","schema_version":"1.0"}'
+    )
     first = materialize_candidate(tmp_path / "first", contract, canonical)
     second = materialize_candidate(tmp_path / "second", contract, shuffled)
     first_validation = plugin.validate(first, contract)
@@ -150,6 +162,10 @@ def test_semantically_equal_candidate_encodings_share_only_canonical_form(
         first_validation.canonical_form_sha256
         == second_validation.canonical_form_sha256
     )
+    assert first_validation.canonical_form_sha256 not in {
+        first.artifact.sha256,
+        first.candidate_hash,
+    }
     assert first_validation.family_evidence.evidence_sha256 == (
         second_validation.family_evidence.evidence_sha256
     )
@@ -235,10 +251,14 @@ def test_synthetic_same_seed_and_id_are_byte_deterministic_across_roots(
 
     assert first.result.to_json() == second.result.to_json()
     assert first.result.sha256 == second.result.sha256
-    assert first.plugin.summarize(first.result) == second.plugin.summarize(second.result)
+    assert first.plugin.summarize(first.result) == second.plugin.summarize(
+        second.result
+    )
 
 
-def test_seed_changes_only_provenance_identity_not_deterministic_score(tmp_path: Path) -> None:
+def test_seed_changes_only_provenance_identity_not_deterministic_score(
+    tmp_path: Path,
+) -> None:
     first = synthetic_case(tmp_path / "first", seed=7)
     second = synthetic_case(tmp_path / "second", seed=19)
 
@@ -259,7 +279,10 @@ with TemporaryDirectory() as directory:
     print(synthetic_case(Path(directory)).result.to_json())
 """
     outputs: list[str] = []
-    for hash_seed, timezone, locale in (("1", "UTC", "C"), ("9187", "GMT-8", "C.UTF-8")):
+    for hash_seed, timezone, locale in (
+        ("1", "UTC", "C"),
+        ("9187", "GMT-8", "C.UTF-8"),
+    ):
         env = os.environ.copy()
         env.update(PYTHONHASHSEED=hash_seed, TZ=timezone, LC_ALL=locale)
         env["PYTHONPATH"] = os.pathsep.join(
@@ -280,7 +303,9 @@ with TemporaryDirectory() as directory:
     assert outputs[0] == outputs[1]
 
 
-def test_plugin_inputs_and_frozen_result_do_not_share_mutable_state(tmp_path: Path) -> None:
+def test_plugin_inputs_and_frozen_result_do_not_share_mutable_state(
+    tmp_path: Path,
+) -> None:
     case = synthetic_case(tmp_path / "case")
     contract_mapping = case.contract.to_dict()
     result_before = case.result.to_json()
@@ -291,3 +316,31 @@ def test_plugin_inputs_and_frozen_result_do_not_share_mutable_state(tmp_path: Pa
     assert case.result.to_json() == result_before
     assert case.result.primary_metric.name != "caller_changed"
     assert case.candidate.payload != bytes(payload_copy)
+
+
+@pytest.mark.parametrize("role", ["gate", "final"])
+def test_synthetic_split_factory_rejects_gate_and_final_before_store_issuance(
+    tmp_path: Path, role: str
+) -> None:
+    root = tmp_path / role
+    plugin, _, contract, _, receipt = validated_synthetic_components(root)
+    request = make_request(contract, receipt, split_role=role)
+    runtime = runtime_fixture(root, contract)
+    store_root = root / "store"
+    store = ContentAddressedArtifactStore.create(store_root)
+    before = directory_entries(store_root)
+
+    with pytest.raises(EvaluationBoundaryError):
+        make_synthetic_development_split(
+            request,
+            contract,
+            receipt,
+            plugin,
+            runtime.lock,
+            result_id=f"result.synthetic.{role}",
+            evaluation_seed=7,
+            artifact_store=store,
+            produced_by_event_id=f"event.synthetic.{role}",
+        )
+
+    assert directory_entries(store_root) == before

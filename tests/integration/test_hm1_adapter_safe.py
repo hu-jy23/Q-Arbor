@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -18,8 +17,10 @@ from q_arbor.evaluation import (
 )
 from q_arbor.plugins.hm1 import HM1EngineOutput, HM1FuturesPlugin
 from q_arbor.plugins.hm1.testing import make_hm1_mock_development_split
+
 from tests.evaluation_helpers import (
     bind_validation,
+    diagnostic_check_name,
     directory_entries,
     fixture_bytes,
     hm1_case,
@@ -113,32 +114,51 @@ def test_hm1_five_engine_states_and_complete_precedence_are_exact(
             "coverage_count": coverage_count,
             "expected_coverage_count": 252,
         }
+        checks = {item.name: item.status for item in case.result.checks}
+        assert all(
+            checks[diagnostic_check_name(name)] == "pass" for name in diagnostics
+        )
     else:
         assert all(item.value is None for item in case.result.diagnostics)
+        checks = {item.name: item.status for item in case.result.checks}
+        assert all(
+            checks[diagnostic_check_name(item.name)] == "not_observed"
+            for item in case.result.diagnostics
+        )
 
 
 @pytest.mark.parametrize(
-    "mutation",
+    ("mutation", "expected_error"),
     [
-        lambda value: value.update(portfolio_daily_sharpe=None),
-        lambda value: value.update(trade_count=None),
-        lambda value: value.update(expected_coverage_count=0),
-        lambda value: value.update(cost_semantics="guessed"),
-        lambda value: value.update(extra="forbidden"),
-        lambda value: value.update(warning_codes=["warning.z", "warning.a"]),
-        lambda value: value.update(warning_codes=["warning.same", "warning.same"]),
-        lambda value: value.update(trade_count=True),
+        (
+            lambda value: value.update(portfolio_daily_sharpe=None),
+            EvaluationInvariantError,
+        ),
+        (lambda value: value.update(trade_count=None), EvaluationInvariantError),
+        (
+            lambda value: value.update(expected_coverage_count=0),
+            EvaluationInvariantError,
+        ),
+        (lambda value: value.update(cost_semantics="guessed"), EvaluationSchemaError),
+        (lambda value: value.update(extra="forbidden"), EvaluationSchemaError),
+        (
+            lambda value: value.update(warning_codes=["warning.z", "warning.a"]),
+            EvaluationInvariantError,
+        ),
+        (
+            lambda value: value.update(warning_codes=["warning.same", "warning.same"]),
+            EvaluationInvariantError,
+        ),
+        (lambda value: value.update(trade_count=True), EvaluationSchemaError),
     ],
 )
 def test_hm1_complete_output_rejects_missing_ambiguous_or_noncanonical_fields(
-    mutation: Any,
+    mutation: Any, expected_error: type[Exception]
 ) -> None:
     mapping = hm1_engine_mapping("complete")
     mutation(mapping)
 
-    with pytest.raises(
-        (EvaluationSchemaError, EvaluationInvariantError)
-    ):
+    with pytest.raises(expected_error):
         HM1EngineOutput.from_mapping(mapping)
 
 
@@ -189,28 +209,38 @@ def test_hm1_valid_strategy_is_ast_checked_without_import_or_execution(
     "payload",
     [
         fixture_bytes("hm1_forbidden_strategy.py"),
-        b"from research_env.backtest.strategy import BaseStrategy\n"
-        b"class CandidateStrategy(BaseStrategy):\n"
-        b"    def on_bar(self, context):\n"
-        b"        import socket\n",
-        b"from research_env.backtest.strategy import BaseStrategy\n"
-        b"class CandidateStrategy(BaseStrategy):\n"
-        b"    def on_bar(self, context):\n"
-        b"        return open('forbidden')\n",
-        b"from research_env.backtest.strategy import BaseStrategy\n"
-        b"class CandidateStrategy(BaseStrategy):\n"
-        b"    def on_bar(self, context):\n"
-        b"        return context.__dict__\n",
-        b"from research_env.backtest.strategy import BaseStrategy\n"
-        b"class CandidateStrategy(BaseStrategy):\n"
-        b"    def on_start(self):\n"
-        b"        return None\n"
-        b"    def on_bar(self, context):\n"
-        b"        return None\n",
-        b"from research_env.backtest.strategy import BaseStrategy\n"
-        b"class CandidateStrategy(BaseStrategy):\n"
-        b"    def on_bar(self, context):\n"
-        b"        global leaked\n",
+        (
+            b"from research_env.backtest.strategy import BaseStrategy\n"
+            b"class CandidateStrategy(BaseStrategy):\n"
+            b"    def on_bar(self, context):\n"
+            b"        import socket\n"
+        ),
+        (
+            b"from research_env.backtest.strategy import BaseStrategy\n"
+            b"class CandidateStrategy(BaseStrategy):\n"
+            b"    def on_bar(self, context):\n"
+            b"        return open('forbidden')\n"
+        ),
+        (
+            b"from research_env.backtest.strategy import BaseStrategy\n"
+            b"class CandidateStrategy(BaseStrategy):\n"
+            b"    def on_bar(self, context):\n"
+            b"        return context.__dict__\n"
+        ),
+        (
+            b"from research_env.backtest.strategy import BaseStrategy\n"
+            b"class CandidateStrategy(BaseStrategy):\n"
+            b"    def on_start(self):\n"
+            b"        return None\n"
+            b"    def on_bar(self, context):\n"
+            b"        return None\n"
+        ),
+        (
+            b"from research_env.backtest.strategy import BaseStrategy\n"
+            b"class CandidateStrategy(BaseStrategy):\n"
+            b"    def on_bar(self, context):\n"
+            b"        global leaked\n"
+        ),
     ],
 )
 def test_hm1_static_guard_rejects_forbidden_constructs_before_mock_split(

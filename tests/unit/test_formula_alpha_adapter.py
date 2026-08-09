@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from q_arbor.contracts import freeze_contract
 from q_arbor.evaluation import (
     ContentAddressedArtifactStore,
     EvaluationBoundaryError,
@@ -23,8 +21,11 @@ from q_arbor.plugins.formula_alpha import (
 from q_arbor.plugins.formula_alpha.testing import (
     make_formula_alpha_mock_development_split,
 )
+
+from q_arbor.contracts import freeze_contract
 from tests.evaluation_helpers import (
     bind_validation,
+    diagnostic_check_name,
     directory_entries,
     fixture_bytes,
     formula_case,
@@ -39,9 +40,9 @@ from tests.hypothesis_helpers import canonical_json
 
 
 def _formula_payload(expression: dict[str, Any]) -> bytes:
-    return canonical_json(
-        {"schema_version": "1.0", "expression": expression}
-    ).encode("utf-8")
+    return canonical_json({"schema_version": "1.0", "expression": expression}).encode(
+        "utf-8"
+    )
 
 
 def _validate_formula(tmp_path: Path, expression: dict[str, Any]) -> Any:
@@ -296,6 +297,11 @@ def test_formula_mock_has_only_two_closed_scoreless_outcomes(
     assert case.result.artifacts == ()
     assert case.result.statistical_diagnostics == ()
     assert {item.value for item in case.result.diagnostics} == {None}
+    checks = {item.name: item.status for item in case.result.checks}
+    assert all(
+        checks[diagnostic_check_name(item.name)] == "not_observed"
+        for item in case.result.diagnostics
+    )
     assert case.plugin.summarize(case.result).primary_metric.value is None
     assert set(FormulaMockOutcome) == {
         FormulaMockOutcome.BACKEND_UNAVAILABLE,

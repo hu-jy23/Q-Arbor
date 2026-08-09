@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from q_arbor.contracts import QuantResearchContract, freeze_contract
 from q_arbor.evaluation import (
     ArtifactRef,
     CandidateArtifact,
@@ -40,6 +38,8 @@ from q_arbor.plugins.synthetic import (
     make_synthetic_development_split,
     synthetic_contract_draft,
 )
+
+from q_arbor.contracts import QuantResearchContract, freeze_contract
 from tests.hypothesis_helpers import canonical_json
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -285,7 +285,7 @@ def runtime_fixture(
     fold_policy = {
         "mode": "aggregate_only" if aggregate_only else "required",
         "expected_fold_ids": [] if aggregate_only else ["fold.a", "fold.b"],
-        "required_metric_names": [] if aggregate_only else [primary_name],
+        "required_metric_names": [primary_name],
     }
     config: dict[str, Any] = {
         "schema_version": "1.0",
@@ -384,9 +384,7 @@ def materialize_candidate(
             relative_path=relative_path,
             payload=payload,
             media_type=(
-                "text/x-python"
-                if relative_path.endswith(".py")
-                else "application/json"
+                "text/x-python" if relative_path.endswith(".py") else "application/json"
             ),
         )
     )
@@ -559,7 +557,6 @@ def synthetic_case(
     root: Path,
     *,
     signal_column: str = "planted_signal",
-    split_role: str = "development",
     result_id: str = "result.synthetic.1",
     request_id: str = "request.synthetic.1",
     seed: int = 7,
@@ -571,23 +568,11 @@ def synthetic_case(
     request = make_request(
         contract,
         receipt,
-        split_role=split_role,
+        split_role="development",
         request_id=request_id,
     )
     runtime = runtime_fixture(root, contract)
     store = ContentAddressedArtifactStore.create(root / "artifact-store")
-    if split_role != "development":
-        binding = make_binding(
-            request=request,
-            contract=contract,
-            receipt=receipt,
-            plugin_identity=identity,
-            runtime_lock=runtime.lock,
-            artifact_resolver=store,
-            result_id=result_id,
-            seed=seed,
-        )
-        raise ValueError("synthetic_case only executes development")
     split = make_synthetic_development_split(
         request,
         contract,
@@ -619,7 +604,9 @@ def invalid_synthetic_case(
     root: Path,
     *,
     fixture_name: str = "synthetic_unknown_field_candidate.json",
-) -> tuple[Any, PluginIdentity, QuantResearchContract, CandidateArtifact, CandidateReceipt]:
+) -> tuple[
+    Any, PluginIdentity, QuantResearchContract, CandidateArtifact, CandidateReceipt
+]:
     identity = synthetic_identity()
     plugin = SyntheticSignalPlugin.create(identity)
     contract = synthetic_contract(identity)
