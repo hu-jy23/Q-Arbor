@@ -375,7 +375,12 @@ identity against the already verified binding, and rejects non-null metrics,
 folds, statistics, artifacts, warnings, or a failure other than
 `contamination`. The helper is not exported from `q_arbor.evaluation`; callers
 cannot use it to turn pre-execution drift or an arbitrary integrity error into a
-result.
+result. The returned object carries a private, non-serialized drift attestation
+so its exact null payload can still be written atomically while the observed
+runtime remains drifted. Every normally frozen result re-verifies before
+`write`; the attestation cannot be constructed through a public factory and
+does not alter bytes or hash. Public `load_evaluation_result` continues to
+re-verify the expected runtime and therefore cannot bless a drifted evaluator.
 
 ### Resource and artifact protocols
 
