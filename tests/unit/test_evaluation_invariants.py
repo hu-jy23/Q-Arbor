@@ -894,12 +894,16 @@ def test_first_post_execution_runtime_drift_returns_contaminated(
     runtime.resolver.verify = verify_then_flip  # type: ignore[method-assign]
 
     result = plugin.evaluate(receipt, split)
+    target = root / f"controlled-{runtime_part}.json"
+    target.write_bytes(b"sentinel")
+    result.write(target)
 
     assert result.status == "contaminated"
     assert result.failure.failure_type == "contamination"
     assert result.primary_metric.value is None
     assert result.fold_metrics == ()
     assert result.artifacts == ()
+    assert target.read_bytes() == result.to_json().encode("utf-8")
     assert identity == plugin.identity
 
 

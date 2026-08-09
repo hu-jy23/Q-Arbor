@@ -10,15 +10,19 @@ from q_arbor.evaluation import (
     ArtifactRef,
     CheckResult,
     EvaluationFailure,
+    EvaluationIntegrityError,
     EvaluationPersistenceError,
     EvaluationSummary,
     FamilyEvidence,
     FoldPolicy,
     MetricValue,
     PluginIdentity,
+    freeze_evaluation_result,
+    load_evaluation_result,
 )
 
 from tests.evaluation_helpers import (
+    corrupt_bytes,
     plugin_identity_mapping,
     synthetic_case,
 )
@@ -204,4 +208,24 @@ def test_runtime_value_write_is_atomic_under_same_fault_contract(
         case.runtime.lock.write(target)
 
     assert caught.value.committed is False
+    assert target.read_bytes() == b"sentinel"
+
+
+def test_public_result_freeze_load_and_write_reject_runtime_drift(
+    tmp_path: Path,
+) -> None:
+    case = synthetic_case(tmp_path / "case")
+    source = tmp_path / "source.json"
+    target = tmp_path / "target.json"
+    case.result.write(source)
+    target.write_bytes(b"sentinel")
+    corrupt_bytes(case.runtime.evaluator_path)
+
+    with pytest.raises(EvaluationIntegrityError):
+        freeze_evaluation_result(case.result.to_dict(), binding=case.binding)
+    with pytest.raises(EvaluationIntegrityError):
+        load_evaluation_result(source, binding=case.binding)
+    with pytest.raises(EvaluationIntegrityError):
+        case.result.write(target)
+
     assert target.read_bytes() == b"sentinel"
