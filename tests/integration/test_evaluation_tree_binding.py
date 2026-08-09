@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from q_arbor.evaluation import (
     EvaluationIntegrityError,
     ReasonCode,
@@ -14,7 +15,6 @@ from q_arbor.evaluation import (
     make_access_denied_result,
     validate_evaluation_evidence,
 )
-
 from q_arbor.hypotheses import QuantHypothesisNode, freeze_node
 from tests.evaluation_helpers import synthetic_case
 from tests.hypothesis_helpers import valid_node_mapping, valid_tree_draft_mapping
@@ -53,6 +53,8 @@ def _scored_node(case: Any, score: float) -> QuantHypothesisNode:
         "data_snapshot_sha256"
     ]
     mapping["scope"]["cost_model_sha256"] = case.result.costs["cost_model_sha256"]
+    for insight in mapping["insights"]:
+        insight["scope"] = copy.deepcopy(mapping["scope"])
     mapping["evidence_refs"][0]["attempt_id"] = case.request.attempt_id
     mapping["evidence_refs"][0]["result_id"] = "result.preexisting.support"
     mapping["evidence_refs"][0]["artifact_refs"] = []

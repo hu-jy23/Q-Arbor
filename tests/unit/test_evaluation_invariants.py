@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from q_arbor.plugins.synthetic import make_synthetic_development_split
 
 from q_arbor.evaluation import (
     ArtifactRef,
@@ -27,6 +26,7 @@ from q_arbor.evaluation import (
     make_candidate_failure_result,
     validate_evaluation_result,
 )
+from q_arbor.plugins.synthetic import make_synthetic_development_split
 from tests.evaluation_helpers import (
     CODE_COMMIT,
     artifact_ref_mapping,
@@ -827,7 +827,7 @@ def test_changed_protected_path_is_invalid_before_evaluation(tmp_path: Path) -> 
         candidate_root,
         contract,
         fixture_bytes("synthetic_planted_candidate.json"),
-        changed_paths=("evaluator/config.json", "strategies/candidate.json"),
+        changed_paths=("candidates/candidate.json", "evaluator/config.json"),
     )
 
     validation = plugin.validate(candidate, contract)
