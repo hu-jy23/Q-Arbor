@@ -682,10 +682,16 @@ primary is median fold net.
 | planted | 0.02, 0.025 | 1.75 | 0.00175 | 0.01825, 0.02325 | 0.02075 |
 
 Snapshot/manifest canonical bytes are internal constants regenerated and
-checked against the contract. The factory accepts only development and a
-prebuilt store, then creates the request-scoped sink itself. Raw rows/targets
-are never serialized. This ordering is known-
-truth interface evidence only.
+checked against the contract. Before constructing a binding, view, or sink, the
+factory requires the contract `data`, `metrics`, and `cost_model` objects to
+equal the corresponding objects from `synthetic_contract_draft` for the live
+plugin and baseline. This pins the primary/diagnostic names, units, directions,
+aggregations, the single `max_drawdown <= 0.2` fraction constraint, fold/split
+semantics, and the `0.001` turnover-cost model; a different schema-valid
+operator, threshold, time range, or cost rule is unsupported and fails closed.
+The factory accepts only development and a prebuilt store, then creates the
+request-scoped sink itself. Raw rows/targets are never serialized. This ordering
+is known-truth interface evidence only.
 
 ### 8.2 HM1FuturesPlugin
 
