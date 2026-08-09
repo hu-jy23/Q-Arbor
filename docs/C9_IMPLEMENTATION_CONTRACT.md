@@ -418,7 +418,7 @@ class ArtifactResolver(Protocol):
     def read_bytes(self, ref: ArtifactRef) -> bytes: ...
     def verify(self, ref: ArtifactRef) -> None: ...
     def verify_issued(
-        self, ref: ArtifactRef, *, request_id: str, runtime_lock_sha256: str
+        self, ref: ArtifactRef, *, request_id: str, runtime_lock: VerifiedRuntimeLock
     ) -> None: ...
 
 
@@ -478,9 +478,15 @@ hash, and allowed artifact pairs into the create-only issuance record. A request
 uses `sha256(request_id.encode("utf-8"))` as its directory, never raw request ID,
 under `artifacts/evaluations/`. The sink alone chooses IDs/paths/digests. Result
 freeze/load calls `verify_issued(ref, request_id=...,
-runtime_lock_sha256=binding.runtime_lock.sha256)`; the store requires exact lock
-hash equality, then verifies its create-only issuance record, request namespace,
-containment, regular-file state, allowed `(kind, media_type)` pairs, and current digest. A merely pre-existing file
+runtime_lock=binding.runtime_lock)`. The store re-verifies that trusted lock and
+reconstructs the complete expected scope record from it. The raw scope bytes
+must equal the exact canonical record; parsed semantic equality is insufficient.
+The store then verifies the request namespace, containment, regular-file state,
+allowed `(kind, media_type)` pair, and current digest. It recomputes
+`identity_digest = SHA256(canonical({kind, media_type, sha256}))` and requires
+exact artifact ID `artifact.<identity_digest>`, exact path
+`<hashed-request-scope>/<identity_digest>`, exact issuance-record filename, and
+raw issuance bytes equal to canonical `ArtifactRef`. A merely pre-existing file
 inside the root is not issued. Duplicate ID/path is rejected.
 
 The request-scope sidecar layout is frozen for recovery and boundary tests:
@@ -488,8 +494,9 @@ The request-scope sidecar layout is frozen for recovery and boundary tests:
 `.issued/<sha256(artifact_id UTF-8)>.json` is the canonical create-only
 ArtifactRef record. Both live below the hashed request directory and are opened
 through the same anchored no-follow directory chain as artifact content; an
-existing symlink/non-regular sidecar or parent fails before any external read or
-write.
+existing symlink/non-regular sidecar or parent, unknown/missing field, wrong
+schema/config/policy value, or noncanonical encoding fails before artifact
+content is trusted.
 
 ## 6. Provenance and status invariants
 
