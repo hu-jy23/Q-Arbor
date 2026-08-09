@@ -14,6 +14,7 @@ from typing import Any, Final
 
 from q_arbor.contracts import QuantResearchContract
 from q_arbor.evaluation import (
+    AuthorizedSplit,
     CandidateArtifact,
     CandidateValidation,
     CheckResult,
@@ -388,7 +389,9 @@ class FormulaAlphaPlugin:
                 raise ValueError("candidate kind mismatch")
             document = _strict_json_object(candidate.payload)
             canonical = _validate_expression(document, self._public_schema._fields)
-            canonical_sha256 = hashlib.sha256(canonical).hexdigest()
+            canonical_sha256 = hashlib.sha256(
+                b"q-arbor.formula.canonical-form.v1\0" + canonical
+            ).hexdigest()
         except (OverflowError, ValueError):
             status = "invalid_candidate"
             if checks[0]["status"] == "pass":
@@ -412,7 +415,9 @@ class FormulaAlphaPlugin:
             plugin_identity=self.identity,
         )
 
-    def evaluate(self, candidate: ValidatedCandidate, split: Any) -> EvaluationResult:
+    def evaluate(
+        self, candidate: ValidatedCandidate, split: AuthorizedSplit
+    ) -> EvaluationResult:
         data = split.data
         if not isinstance(data, FormulaAlphaSplitData):
             raise EvaluationIntegrityError("formula split data type mismatch")

@@ -11,6 +11,7 @@ from typing import Any, Final
 
 from q_arbor.contracts import QuantResearchContract
 from q_arbor.evaluation import (
+    AuthorizedSplit,
     CandidateArtifact,
     CandidateValidation,
     CheckResult,
@@ -142,7 +143,7 @@ class HM1EngineOutput:
         if not isinstance(status, str) or status not in _ENGINE_STATUSES:
             raise EvaluationSchemaError("unsupported HM1 engine status")
         if mapping["cost_semantics"] != "unavailable":
-            raise EvaluationInvariantError(
+            raise EvaluationSchemaError(
                 "HM1 cost semantics must remain unavailable in C9"
             )
         normalized: dict[str, object] = {
@@ -520,7 +521,9 @@ class HM1FuturesPlugin:
                 tree = ast.parse(source, mode="exec", type_comments=True)
             except (SyntaxError, ValueError) as exc:
                 raise ValueError("HM1 candidate is not valid Python") from exc
-            canonical_sha256 = hashlib.sha256(_validate_hm1_ast(tree)).hexdigest()
+            canonical_sha256 = hashlib.sha256(
+                b"q-arbor.hm1.canonical-form.v1\0" + _validate_hm1_ast(tree)
+            ).hexdigest()
         except (RecursionError, ValueError):
             status = "invalid_candidate"
             if checks[0]["status"] == "pass":
@@ -544,7 +547,9 @@ class HM1FuturesPlugin:
             plugin_identity=self.identity,
         )
 
-    def evaluate(self, candidate: ValidatedCandidate, split: Any) -> EvaluationResult:
+    def evaluate(
+        self, candidate: ValidatedCandidate, split: AuthorizedSplit
+    ) -> EvaluationResult:
         if not isinstance(split.data, HM1SplitData):
             raise EvaluationIntegrityError("HM1 split data type mismatch")
         binding = split.binding
@@ -598,7 +603,6 @@ class HM1FuturesPlugin:
                 status="implementation_failure",
                 failure_type="implementation_failure",
                 code="hm1.implementation_failure",
-                warnings=output.warning_codes,
             )
         elif status == "evaluation_failure":
             result = self._failure_result(
@@ -606,7 +610,6 @@ class HM1FuturesPlugin:
                 status="evaluation_failure",
                 failure_type="evaluation_failure",
                 code="hm1.evaluation_failure",
-                warnings=output.warning_codes,
             )
         elif status == "timeout":
             result = self._failure_result(
@@ -614,7 +617,6 @@ class HM1FuturesPlugin:
                 status="evaluation_failure",
                 failure_type="timeout",
                 code="hm1.timeout",
-                warnings=output.warning_codes,
             )
         elif status == "incomparable":
             result = self._failure_result(
