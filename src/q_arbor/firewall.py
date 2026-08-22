@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from hashlib import sha256
 from threading import Lock
 from types import MappingProxyType
@@ -57,6 +58,71 @@ class CapabilityGrant:
     state: str
     token_digest: str = field(repr=False)
     issued_event_id: str
+
+
+class FinalCapabilityState(str, Enum):
+    """Closed C6 final-capability states for the synthetic mechanism test."""
+
+    LOCKED = "locked"
+    UNLOCKED = "unlocked"
+    CONSUMED = "consumed"
+
+
+class FinalResearchAction(str, Enum):
+    """Research actions forbidden after final-capability consumption."""
+
+    PROPOSE = "propose"
+    DISPATCH = "dispatch"
+    EVALUATE = "evaluate"
+    MERGE = "merge"
+
+
+@dataclass(frozen=True, slots=True)
+class FinalCapabilityTerminal:
+    """Mechanism-only final-capability state; it grants no sealed-final access."""
+
+    state: FinalCapabilityState = FinalCapabilityState.LOCKED
+
+    def __post_init__(self) -> None:
+        self._validated_state()
+
+    def unlock(self) -> FinalCapabilityTerminal:
+        """Return the sole valid successor of a locked capability."""
+
+        if self._validated_state() is not FinalCapabilityState.LOCKED:
+            raise EvaluationBoundaryError(
+                "final capability unlock transition is invalid"
+            )
+        return FinalCapabilityTerminal(FinalCapabilityState.UNLOCKED)
+
+    def consume(self) -> FinalCapabilityTerminal:
+        """Return the terminal successor of an unlocked capability."""
+
+        if self._validated_state() is not FinalCapabilityState.UNLOCKED:
+            raise EvaluationBoundaryError(
+                "final capability consume transition is invalid"
+            )
+        return FinalCapabilityTerminal(FinalCapabilityState.CONSUMED)
+
+    def allow_research_action(
+        self,
+        action: FinalResearchAction,
+    ) -> FinalResearchAction:
+        """Fail closed for untyped actions and every action after consumption."""
+
+        state = self._validated_state()
+        if type(action) is not FinalResearchAction:
+            raise EvaluationBoundaryError("final research action is invalid")
+        if state is FinalCapabilityState.CONSUMED:
+            raise EvaluationBoundaryError(
+                "final capability is consumed and research is terminal"
+            )
+        return action
+
+    def _validated_state(self) -> FinalCapabilityState:
+        if type(self.state) is not FinalCapabilityState:
+            raise EvaluationBoundaryError("final capability state is invalid")
+        return self.state
 
 
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
@@ -193,6 +259,9 @@ class EvaluationBroker:
 __all__ = [
     "CapabilityGrant",
     "EvaluationBroker",
+    "FinalCapabilityState",
+    "FinalCapabilityTerminal",
+    "FinalResearchAction",
     "SplitGrant",
     "SplitGrantRegistry",
 ]

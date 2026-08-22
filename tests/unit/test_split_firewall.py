@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -10,6 +10,9 @@ from q_arbor.evaluation import EvaluationBoundaryError, EvaluationRequest
 from q_arbor.firewall import (
     CapabilityGrant,
     EvaluationBroker,
+    FinalCapabilityState,
+    FinalCapabilityTerminal,
+    FinalResearchAction,
     SplitGrant,
     SplitGrantRegistry,
 )
@@ -354,3 +357,93 @@ def test_broker_keeps_final_sealed(tmp_path: Path) -> None:
         )
 
     assert broker.query_count(request.capability_grant_id) == 0
+
+
+def test_e4_final_capability_transitions_are_monotonic_immutable_values() -> None:
+    locked = FinalCapabilityTerminal()
+
+    unlocked = locked.unlock()
+    consumed = unlocked.consume()
+
+    assert locked.state is FinalCapabilityState.LOCKED
+    assert unlocked.state is FinalCapabilityState.UNLOCKED
+    assert consumed.state is FinalCapabilityState.CONSUMED
+    assert locked is not unlocked
+    assert unlocked is not consumed
+    with pytest.raises(FrozenInstanceError):
+        consumed.state = FinalCapabilityState.LOCKED  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "state",
+    [FinalCapabilityState.UNLOCKED, FinalCapabilityState.CONSUMED],
+)
+def test_e4_final_capability_rejects_duplicate_unlock(
+    state: FinalCapabilityState,
+) -> None:
+    capability = FinalCapabilityTerminal(state=state)
+
+    with pytest.raises(EvaluationBoundaryError, match="unlock transition"):
+        capability.unlock()
+
+    assert capability.state is state
+
+
+def test_e4_final_capability_rejects_consume_before_unlock() -> None:
+    locked = FinalCapabilityTerminal()
+
+    with pytest.raises(EvaluationBoundaryError, match="consume transition"):
+        locked.consume()
+
+    assert locked.state is FinalCapabilityState.LOCKED
+
+
+def test_e4_final_capability_rejects_duplicate_consume() -> None:
+    consumed = FinalCapabilityTerminal(FinalCapabilityState.CONSUMED)
+
+    with pytest.raises(EvaluationBoundaryError, match="consume transition"):
+        consumed.consume()
+
+    assert consumed.state is FinalCapabilityState.CONSUMED
+
+
+@pytest.mark.parametrize("invalid_state", ["locked", None, object()])
+def test_e4_final_capability_rejects_untyped_states(
+    invalid_state: object,
+) -> None:
+    with pytest.raises(EvaluationBoundaryError, match="state is invalid"):
+        FinalCapabilityTerminal(invalid_state)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("state", list(FinalCapabilityState))
+def test_e5_final_capability_rejects_untyped_research_actions(
+    state: FinalCapabilityState,
+) -> None:
+    capability = FinalCapabilityTerminal(state)
+
+    with pytest.raises(EvaluationBoundaryError, match="research action is invalid"):
+        capability.allow_research_action("propose")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("action", list(FinalResearchAction))
+def test_e5_consumed_final_capability_rejects_research_actions(
+    action: FinalResearchAction,
+) -> None:
+    consumed = FinalCapabilityTerminal(FinalCapabilityState.CONSUMED)
+
+    with pytest.raises(EvaluationBoundaryError, match="consumed.*terminal"):
+        consumed.allow_research_action(action)
+
+
+@pytest.mark.parametrize("action", list(FinalResearchAction))
+@pytest.mark.parametrize(
+    "state",
+    [FinalCapabilityState.LOCKED, FinalCapabilityState.UNLOCKED],
+)
+def test_e5_research_actions_remain_open_before_final_consumption(
+    state: FinalCapabilityState,
+    action: FinalResearchAction,
+) -> None:
+    capability = FinalCapabilityTerminal(state)
+
+    assert capability.allow_research_action(action) is action
