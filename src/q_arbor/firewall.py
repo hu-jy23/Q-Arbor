@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import hmac
+import os
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from hashlib import sha256
+from threading import Lock
 from types import MappingProxyType
 
 from q_arbor.evaluation import EvaluationBoundaryError, EvaluationRequest
@@ -38,4 +43,156 @@ class SplitGrantRegistry:
         return grant.resource
 
 
-__all__ = ["SplitGrant", "SplitGrantRegistry"]
+@dataclass(frozen=True, slots=True)
+class CapabilityGrant:
+    """Frozen C6 capability identity without its raw bearer token."""
+
+    grant_id: str
+    run_id: str
+    contract_hash: str
+    role: str
+    principal: str
+    query_limit: int
+    query_count: int
+    state: str
+    token_digest: str = field(repr=False)
+    issued_event_id: str
+
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
+_SHA256_RE = re.compile(r"[a-f0-9]{64}")
+_PRINCIPAL_ROLES = {
+    "executor": frozenset({"development"}),
+    "coordinator": frozenset({"development", "gate"}),
+    "finalizer": frozenset({"final"}),
+}
+
+
+class EvaluationBroker:
+    """In-memory fail-closed authorization and query-budget boundary."""
+
+    __slots__ = ("_grants", "_query_counts", "_resources", "_state_lock")
+
+    def __init__(
+        self,
+        grants: Mapping[str, CapabilityGrant],
+        resources: SplitGrantRegistry,
+    ) -> None:
+        if not isinstance(grants, Mapping):
+            raise EvaluationBoundaryError("capability grant registry is invalid")
+        if not isinstance(resources, SplitGrantRegistry):
+            raise EvaluationBoundaryError("split resource registry is invalid")
+        copied = dict(grants)
+        counts = {
+            grant_id: (
+                grant.query_count
+                if type(grant) is CapabilityGrant
+                and type(grant.query_count) is int
+                and grant.query_count >= 0
+                else 0
+            )
+            for grant_id, grant in copied.items()
+        }
+        self._grants = MappingProxyType(copied)
+        self._query_counts = counts
+        self._resources = resources
+        self._state_lock = Lock()
+
+    def __repr__(self) -> str:
+        return f"EvaluationBroker(grants={len(self._grants)})"
+
+    def query_count(self, grant_id: str) -> int:
+        """Return broker-owned execution-query consumption for one grant."""
+
+        with self._state_lock:
+            if grant_id not in self._query_counts:
+                raise EvaluationBoundaryError("capability grant is unavailable")
+            return self._query_counts[grant_id]
+
+    def authorize(
+        self,
+        request: EvaluationRequest,
+        *,
+        principal: str,
+        token: bytes,
+    ) -> object:
+        """Consume one query and return only the exactly authorized opaque handle."""
+
+        if type(request) is not EvaluationRequest:
+            raise EvaluationBoundaryError("evaluation request is invalid")
+        with self._state_lock:
+            grant = self._grants.get(request.capability_grant_id)
+            if grant is None:
+                raise EvaluationBoundaryError("capability grant is unavailable")
+            self._validate_grant(grant)
+            if grant.grant_id != request.capability_grant_id:
+                raise EvaluationBoundaryError("capability grant identity differs")
+            if request.split_role == "final":
+                raise EvaluationBoundaryError("final split remains sealed")
+            if grant.run_id != request.run_id:
+                raise EvaluationBoundaryError("run differs from capability grant")
+            if grant.contract_hash != request.contract_hash:
+                raise EvaluationBoundaryError("contract differs from capability grant")
+            if grant.role != request.split_role:
+                raise EvaluationBoundaryError("split role differs from capability grant")
+            allowed_roles = _PRINCIPAL_ROLES.get(principal)
+            if (
+                grant.principal != principal
+                or allowed_roles is None
+                or request.split_role not in allowed_roles
+            ):
+                raise EvaluationBoundaryError("principal differs from capability grant")
+            if type(token) is not bytes or not token:
+                raise EvaluationBoundaryError("capability token is invalid")
+            supplied_digest = sha256(token).hexdigest()
+            if not hmac.compare_digest(grant.token_digest, supplied_digest):
+                raise EvaluationBoundaryError("capability token is invalid")
+            if grant.state != "active":
+                raise EvaluationBoundaryError("capability grant is inactive")
+
+            count = self._query_counts[request.capability_grant_id]
+            if count >= grant.query_limit:
+                raise EvaluationBoundaryError("capability query budget is exhausted")
+            resource = self._resources.resolve(request)
+            if isinstance(
+                resource,
+                (str, bytes, bytearray, memoryview, os.PathLike),
+            ):
+                raise EvaluationBoundaryError("split resource must be opaque")
+
+            self._query_counts[request.capability_grant_id] = count + 1
+            return resource
+
+    @staticmethod
+    def _validate_grant(grant: object) -> None:
+        if type(grant) is not CapabilityGrant:
+            raise EvaluationBoundaryError("capability grant is invalid")
+        identifier_values = (grant.grant_id, grant.run_id, grant.issued_event_id)
+        if any(
+            not isinstance(value, str) or _IDENTIFIER_RE.fullmatch(value) is None
+            for value in identifier_values
+        ):
+            raise EvaluationBoundaryError("capability grant is invalid")
+        if (
+            not isinstance(grant.contract_hash, str)
+            or _SHA256_RE.fullmatch(grant.contract_hash) is None
+            or grant.role not in {"development", "gate", "final"}
+            or grant.principal not in _PRINCIPAL_ROLES
+            or type(grant.query_limit) is not int
+            or grant.query_limit < 1
+            or type(grant.query_count) is not int
+            or grant.query_count < 0
+            or grant.query_count > grant.query_limit
+            or grant.state not in {"active", "consumed", "revoked", "expired"}
+            or not isinstance(grant.token_digest, str)
+            or _SHA256_RE.fullmatch(grant.token_digest) is None
+        ):
+            raise EvaluationBoundaryError("capability grant is invalid")
+
+
+__all__ = [
+    "CapabilityGrant",
+    "EvaluationBroker",
+    "SplitGrant",
+    "SplitGrantRegistry",
+]
