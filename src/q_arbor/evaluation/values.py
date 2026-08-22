@@ -19,8 +19,13 @@ from .codec import (
     require_reason_code,
     require_sha256,
     validate_definition,
+    validate_discriminator,
 )
-from .errors import EvaluationInvariantError, EvaluationSchemaError
+from .errors import (
+    EvaluationIntegrityError,
+    EvaluationInvariantError,
+    EvaluationSchemaError,
+)
 
 
 class ReasonCode(str):
@@ -145,6 +150,119 @@ class ArtifactRef(_ImmutableJSON):
     @property
     def produced_by_event_id(self) -> str | None:
         return cast(str | None, self.to_dict().get("produced_by_event_id"))
+
+
+def compute_test_family_snapshot_hash(mapping: Mapping[str, Any]) -> str:
+    """Hash canonical snapshot content, excluding only its declared hash."""
+
+    normalized = normalize_mapping(mapping)
+    normalized.pop("snapshot_hash", None)
+    return sha256(canonical_normalized_bytes(normalized)).hexdigest()
+
+
+class TestFamilySnapshot(_ImmutableJSON):
+    """Canonical frozen C6 test-family membership and method assumptions."""
+
+    __test__ = False
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> TestFamilySnapshot:
+        normalized = normalize_mapping(mapping)
+        validate_discriminator(normalized, "test_family_snapshot")
+
+        for field in (
+            "test_family_id",
+            "run_id",
+            "decision_point_id",
+            "frozen_event_id",
+        ):
+            require_identifier(normalized[field], field)
+        for field in ("member_candidate_ids", "evaluation_request_ids"):
+            for identifier in cast(list[JSONValue], normalized[field]):
+                require_identifier(identifier, field)
+        for field in (
+            "benchmark_ref",
+            "selection_rule_ref",
+            "dependence_description_ref",
+        ):
+            ArtifactRef.from_mapping(cast(Mapping[str, Any], normalized[field]))
+        require_sha256(normalized["method_plan_hash"], "method_plan_hash")
+        declared_hash = require_sha256(
+            normalized["snapshot_hash"], "snapshot_hash"
+        )
+        if declared_hash != compute_test_family_snapshot_hash(normalized):
+            raise EvaluationIntegrityError("test family snapshot hash does not match")
+        return cls._from_normalized(normalized)
+
+    @property
+    def schema_version(self) -> str:
+        return cast(str, self._get("schema_version"))
+
+    @property
+    def test_family_id(self) -> str:
+        return cast(str, self._get("test_family_id"))
+
+    @property
+    def run_id(self) -> str:
+        return cast(str, self._get("run_id"))
+
+    @property
+    def decision_point_id(self) -> str:
+        return cast(str, self._get("decision_point_id"))
+
+    @property
+    def family_unit(self) -> str:
+        return cast(str, self._get("family_unit"))
+
+    @property
+    def duplicate_policy(self) -> str:
+        return cast(str, self._get("duplicate_policy"))
+
+    @property
+    def member_candidate_ids(self) -> tuple[str, ...]:
+        return cast(tuple[str, ...], self._get("member_candidate_ids"))
+
+    @property
+    def evaluation_request_ids(self) -> tuple[str, ...]:
+        return cast(tuple[str, ...], self._get("evaluation_request_ids"))
+
+    @property
+    def benchmark_ref(self) -> ArtifactRef:
+        return ArtifactRef.from_mapping(
+            cast(Mapping[str, Any], self._get("benchmark_ref"))
+        )
+
+    @property
+    def selection_rule_ref(self) -> ArtifactRef:
+        return ArtifactRef.from_mapping(
+            cast(Mapping[str, Any], self._get("selection_rule_ref"))
+        )
+
+    @property
+    def dependence_description_ref(self) -> ArtifactRef:
+        return ArtifactRef.from_mapping(
+            cast(Mapping[str, Any], self._get("dependence_description_ref"))
+        )
+
+    @property
+    def method_plan_hash(self) -> str:
+        return cast(str, self._get("method_plan_hash"))
+
+    @property
+    def frozen_event_id(self) -> str:
+        return cast(str, self._get("frozen_event_id"))
+
+    @property
+    def snapshot_hash(self) -> str:
+        return cast(str, self._get("snapshot_hash"))
+
+
+def freeze_test_family_snapshot(mapping: Mapping[str, Any]) -> TestFamilySnapshot:
+    """Create a canonical snapshot and fill its content-bound hash."""
+
+    normalized = normalize_mapping(mapping)
+    normalized["snapshot_hash"] = compute_test_family_snapshot_hash(normalized)
+    return TestFamilySnapshot.from_mapping(normalized)
 
 
 class PluginIdentity(_ImmutableJSON):

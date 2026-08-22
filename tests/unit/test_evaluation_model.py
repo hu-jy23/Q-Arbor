@@ -31,6 +31,11 @@ from q_arbor.evaluation import (
     load_evaluation_result,
     validate_evaluation_result,
 )
+from q_arbor.evaluation.values import (
+    TestFamilySnapshot,
+    compute_test_family_snapshot_hash,
+    freeze_test_family_snapshot,
+)
 from tests.evaluation_helpers import (
     evaluation_fixture,
     plugin_identity_mapping,
@@ -123,6 +128,151 @@ def test_mapping_value_constructors_are_canonical_detached_and_hashable() -> Non
         assert hash(value) == hash(value)
         snapshot[next(iter(snapshot))] = "caller mutation"
         assert value.to_json() != canonical_json(snapshot)
+
+
+def _test_family_snapshot_content() -> dict[str, Any]:
+    def artifact_ref(name: str, digest: str) -> dict[str, Any]:
+        return {
+            "artifact_id": f"artifact.{name}",
+            "kind": f"q-arbor.{name}.v1",
+            "relative_path": f"evaluation/{name}.json",
+            "sha256": digest * 64,
+            "media_type": "application/json",
+            "produced_by_event_id": "event.family-inputs",
+        }
+
+    return {
+        "schema_version": "1.0",
+        "test_family_id": "family.synthetic-queries",
+        "run_id": "run.synthetic",
+        "decision_point_id": "decision.family-freeze",
+        "family_unit": "evaluation_query",
+        "duplicate_policy": "count_each_query",
+        "member_candidate_ids": [
+            "candidate.denied",
+            "candidate.failed",
+            "candidate.semantic-duplicate",
+            "candidate.scoreless",
+        ],
+        "evaluation_request_ids": [
+            "request.denied",
+            "request.failed",
+            "request.semantic-duplicate",
+            "request.scoreless",
+        ],
+        "benchmark_ref": artifact_ref("benchmark", "a"),
+        "selection_rule_ref": artifact_ref("selection-rule", "b"),
+        "dependence_description_ref": artifact_ref("dependence", "c"),
+        "method_plan_hash": "d" * 64,
+        "frozen_event_id": "event.family-frozen",
+    }
+
+
+def test_family_snapshot_round_trip_is_canonical_immutable_and_stably_hashed() -> None:
+    content = _test_family_snapshot_content()
+    original = copy.deepcopy(content)
+
+    snapshot = freeze_test_family_snapshot(content)
+    expected_hash = hashlib.sha256(canonical_json(original).encode()).hexdigest()
+    loaded = TestFamilySnapshot.from_mapping(snapshot.to_dict())
+    reordered_keys = dict(reversed(list(original.items())))
+
+    assert content == original
+    assert snapshot == loaded
+    assert snapshot.to_json() == canonical_json(snapshot.to_dict())
+    assert snapshot.snapshot_hash == expected_hash
+    assert compute_test_family_snapshot_hash(snapshot.to_dict()) == expected_hash
+    assert freeze_test_family_snapshot(reordered_keys).snapshot_hash == expected_hash
+    assert snapshot.member_candidate_ids == tuple(original["member_candidate_ids"])
+    assert snapshot.evaluation_request_ids == tuple(original["evaluation_request_ids"])
+    assert snapshot.benchmark_ref == ArtifactRef.from_mapping(original["benchmark_ref"])
+
+    detached = snapshot.to_dict()
+    detached["member_candidate_ids"].reverse()
+    detached["dependence_description_ref"]["sha256"] = "e" * 64
+    with pytest.raises(AttributeError):
+        snapshot.snapshot_hash = "f" * 64  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        snapshot.member_candidate_ids[0] = "candidate.changed"  # type: ignore[index]
+    assert snapshot.to_dict()["member_candidate_ids"] == original[
+        "member_candidate_ids"
+    ]
+    assert snapshot.dependence_description_ref.sha256 == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.update(snapshot_hash="f" * 64),
+        lambda value: value["member_candidate_ids"].reverse(),
+        lambda value: value["evaluation_request_ids"].reverse(),
+        lambda value: value["member_candidate_ids"].append("candidate.extra"),
+        lambda value: value.update(family_unit="candidate"),
+        lambda value: value.update(duplicate_policy="collapse_exact_only"),
+        lambda value: value.update(method_plan_hash="e" * 64),
+        lambda value: value["benchmark_ref"].update(sha256="e" * 64),
+        lambda value: value["selection_rule_ref"].update(sha256="e" * 64),
+        lambda value: value["dependence_description_ref"].update(sha256="e" * 64),
+        lambda value: value.update(frozen_event_id="event.family-refrozen"),
+    ],
+)
+def test_family_snapshot_hash_rejects_tampering_and_assumption_drift(
+    mutation: Any,
+) -> None:
+    mapping = freeze_test_family_snapshot(_test_family_snapshot_content()).to_dict()
+    mutation(mapping)
+
+    with pytest.raises(EvaluationIntegrityError):
+        TestFamilySnapshot.from_mapping(mapping)
+
+
+@pytest.mark.parametrize(
+    "field", ["member_candidate_ids", "evaluation_request_ids"]
+)
+def test_family_snapshot_duplicate_ids_fail_frozen_schema(field: str) -> None:
+    mapping = freeze_test_family_snapshot(_test_family_snapshot_content()).to_dict()
+    mapping[field][1] = mapping[field][0]
+    mapping["snapshot_hash"] = compute_test_family_snapshot_hash(mapping)
+
+    with pytest.raises(EvaluationSchemaError):
+        TestFamilySnapshot.from_mapping(mapping)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        (lambda value: value.update(schema_version="2.0"), EvaluationSchemaError),
+        (
+            lambda value: value.update(test_family_id="invalid identifier"),
+            EvaluationSchemaError,
+        ),
+        (
+            lambda value: value.update(method_plan_hash="A" * 64),
+            EvaluationSchemaError,
+        ),
+        (
+            lambda value: value["dependence_description_ref"].update(
+                relative_path="evaluation/*.json"
+            ),
+            EvaluationInvariantError,
+        ),
+        (
+            lambda value: value["selection_rule_ref"].update(
+                produced_by_event_id="invalid event"
+            ),
+            EvaluationSchemaError,
+        ),
+    ],
+)
+def test_family_snapshot_enforces_frozen_discriminator_and_strict_refs(
+    mutation: Any,
+    expected_error: type[Exception],
+) -> None:
+    content = _test_family_snapshot_content()
+    mutation(content)
+
+    with pytest.raises(expected_error):
+        freeze_test_family_snapshot(content)
 
 
 @pytest.mark.parametrize(
