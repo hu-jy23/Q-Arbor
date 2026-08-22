@@ -18,7 +18,10 @@ from tests.evaluation_helpers import synthetic_case
 from tests.hypothesis_helpers import canonical_json, node_draft_kwargs, scope_mapping, hypothesis_mapping, family_mapping
 
 
-def _snapshot(case, request, scope, *, selected_insight_ids=(), user="refine:synthetic"):
+def _snapshot(
+    case, request, scope, *, selected_insight_ids=(), evidence_hashes=(),
+    failure_summary=None, user="refine:synthetic",
+):
     system = "dispatch:development"
     snapshot = {
         "schema_version": "1.0", "prompt_snapshot_id": "prompt.node.qualification",
@@ -32,11 +35,12 @@ def _snapshot(case, request, scope, *, selected_insight_ids=(), user="refine:syn
         "user_prompt_sha256": hashlib.sha256(user.encode()).hexdigest(),
         "system_prompt_redacted": system, "user_prompt_redacted": user,
         "plugin": case.identity.to_dict(), "selected_insight_ids": list(selected_insight_ids),
-        "evidence_hashes": [], "editable_surface": case.contract.to_dict()["editable_surface"],
+        "evidence_hashes": list(evidence_hashes), "editable_surface": case.contract.to_dict()["editable_surface"],
         "protected_paths": case.contract.to_dict()["protected_paths"],
         "required_outputs": case.contract.to_dict()["required_outputs"],
         "development_evaluator_descriptor": {
             "split_role": "development", "split_manifest_hash": request.split_manifest_hash,
+            **({"failure_summary": failure_summary} if failure_summary is not None else {}),
         },
         "capability_grant_id": request.capability_grant_id,
         "redaction_manifest": ["development_only"],
@@ -74,6 +78,11 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
     snapshot = _snapshot(
         case, request, scope,
         selected_insight_ids=["insight.parent.failed"],
+        evidence_hashes=[hashlib.sha256(b"insight.parent.failed:evidence").hexdigest()],
+        failure_summary={
+            "category": "constraint_violation",
+            "summary": "ancestor failed under development evaluation",
+        },
     )
     proposal = {
         "node_id": request.node_id, "attempt_id": request.attempt_id,
@@ -142,6 +151,38 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
 
     trace = run_development_cycle(proposal, snapshot, dispatch, evaluate, decide)
     assert consumed and consumed[0].sha256 == trace.snapshot.sha256
+    consumed_snapshot = consumed[0].to_dict()
+    ancestor_evidence_hash = hashlib.sha256(
+        b"insight.parent.failed:evidence"
+    ).hexdigest()
+    sensitive_source = {
+        "raw_gate_locator": "raw_gate_locator",
+        "raw_final_locator": "raw_final_locator",
+        "raw_path": "protected/evaluator.json",
+        "raw_data": "secret-data-sentinel",
+        "seed": "seed-sentinel",
+        "capability_token": "capability-token-sentinel",
+        "protected_evaluator_surface": "evaluator/internal.py",
+    }
+    assert "insight.parent.failed" in consumed_snapshot["selected_insight_ids"]
+    assert ancestor_evidence_hash in consumed_snapshot["evidence_hashes"]
+    descriptor = consumed_snapshot["development_evaluator_descriptor"]
+    assert descriptor["failure_summary"] == {
+        "category": "constraint_violation",
+        "summary": "ancestor failed under development evaluation",
+    }
+    assert consumed_snapshot["family_id"] == "family.node.qualification"
+    assert consumed_snapshot["scope"] is not None
+    assert descriptor["split_role"] == "development"
+    assert descriptor["split_manifest_hash"] == request.split_manifest_hash
+    assert not set(consumed_snapshot["editable_surface"]) & set(
+        consumed_snapshot["protected_paths"]
+    )
+    serialized = consumed[0].to_json()
+    for sensitive in sensitive_source:
+        assert sensitive not in serialized
+    for sensitive in sensitive_source.values():
+        assert sensitive not in serialized
     assert trace.node.id == request.node_id and trace.request.attempt_id in trace.node.attempt_ids
     assert trace.result.request_id == request.request_id and trace.result.result_id == result_id
     assert trace.node.evidence_refs[0]["result_id"] == trace.result.result_id
