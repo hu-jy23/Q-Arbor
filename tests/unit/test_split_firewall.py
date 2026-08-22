@@ -139,6 +139,7 @@ def _broker(
     resource: object,
     *,
     capability: CapabilityGrant | None = None,
+    runtime_lock: VerifiedRuntimeLock | None = None,
 ) -> EvaluationBroker:
     grant = capability or _capability_grant(request)
     return EvaluationBroker(
@@ -151,6 +152,11 @@ def _broker(
                     resource=resource,
                 )
             }
+        ),
+        runtime_locks=(
+            {request.capability_grant_id: runtime_lock}
+            if runtime_lock is not None
+            else None
         ),
     )
 
@@ -165,7 +171,12 @@ def _runtime_authorization_case(
     ]
     handle = object()
     runtime = runtime_fixture(tmp_path / "runtime", contract)
-    return request, _broker(request, manifest, handle), handle, runtime
+    return (
+        request,
+        _broker(request, manifest, handle, runtime_lock=runtime.lock),
+        handle,
+        runtime,
+    )
 
 
 def test_broker_runtime_authorization_rejects_evaluator_byte_tamper(
@@ -247,6 +258,38 @@ def test_broker_runtime_authorization_runs_existing_checks_and_consumes_one(
         is handle
     )
     assert broker.query_count(request.capability_grant_id) == 1
+
+
+def test_broker_rejects_valid_runtime_lock_substitution_without_spending_budget(
+    tmp_path: Path,
+) -> None:
+    _, _, contract, _, receipt = validated_synthetic_components(tmp_path / "case")
+    request = make_request(contract, receipt)
+    manifest = contract.to_dict()["data"]["splits"]["development"][
+        "manifest_sha256"
+    ]
+    bound_runtime = runtime_fixture(tmp_path / "bound-runtime", contract)
+    replacement_runtime = runtime_fixture(
+        tmp_path / "replacement-runtime",
+        contract,
+        evaluator_payload=b"another valid evaluator\n",
+    )
+    broker = _broker(
+        request,
+        manifest,
+        object(),
+        runtime_lock=bound_runtime.lock,
+    )
+
+    with pytest.raises(EvaluationBoundaryError, match="runtime lock"):
+        broker.authorize_runtime(
+            request,
+            runtime_lock=replacement_runtime.lock,
+            principal="executor",
+            token=_CAPABILITY_TOKEN,
+        )
+
+    assert broker.query_count(request.capability_grant_id) == 0
 
 
 def test_broker_rejects_forged_grant_without_spending_budget(
@@ -443,6 +486,41 @@ def test_broker_rejects_query_budget_exhaustion(tmp_path: Path) -> None:
     assert broker.query_count(request.capability_grant_id) == 1
 
 
+def test_rebuilt_broker_preserves_shared_authority_query_budget(
+    tmp_path: Path,
+) -> None:
+    request, manifest = _development_request_and_manifest(tmp_path)
+    capability = _capability_grant(request, query_limit=1)
+    resource = object()
+    broker = _broker(request, manifest, resource, capability=capability)
+    broker.authorize(
+        request,
+        principal="executor",
+        token=_CAPABILITY_TOKEN,
+    )
+    rebuilt = EvaluationBroker(
+        {request.capability_grant_id: capability},
+        SplitGrantRegistry(
+            {
+                request.capability_grant_id: SplitGrant(
+                    split_role=request.split_role,
+                    split_manifest_hash=manifest,
+                    resource=resource,
+                )
+            }
+        ),
+        authority=broker.authority,
+    )
+
+    assert rebuilt.query_count(request.capability_grant_id) == 1
+    with pytest.raises(EvaluationBoundaryError, match="query budget"):
+        rebuilt.authorize(
+            request,
+            principal="executor",
+            token=_CAPABILITY_TOKEN,
+        )
+
+
 def test_broker_keeps_final_sealed(tmp_path: Path) -> None:
     _, _, contract, _, receipt = validated_synthetic_components(tmp_path / "case")
     request = make_request(contract, receipt, split_role="final")
@@ -476,6 +554,14 @@ def test_e4_final_capability_transitions_are_monotonic_immutable_values() -> Non
     assert unlocked is not consumed
     with pytest.raises(FrozenInstanceError):
         consumed.state = FinalCapabilityState.LOCKED  # type: ignore[misc]
+
+
+def test_e4_old_locked_instance_cannot_replay_unlock() -> None:
+    locked = FinalCapabilityTerminal()
+    locked.unlock()
+
+    with pytest.raises(EvaluationBoundaryError, match="unlock transition"):
+        locked.unlock()
 
 
 @pytest.mark.parametrize(

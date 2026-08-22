@@ -81,14 +81,99 @@ class FinalResearchAction(str, Enum):
     MERGE = "merge"
 
 
+class CapabilityAuthority:
+    """Shared in-process authority for capability state and runtime identity."""
+
+    __slots__ = ("_final_state", "_query_counts", "_runtime_locks", "_state_lock")
+
+    def __init__(self) -> None:
+        self._final_state: FinalCapabilityState | None = None
+        self._query_counts: dict[str, int] = {}
+        self._runtime_locks: dict[str, str] = {}
+        self._state_lock = Lock()
+
+    def _register_grants(self, grants: Mapping[str, CapabilityGrant]) -> None:
+        with self._state_lock:
+            for grant_id, grant in grants.items():
+                initial_count = (
+                    grant.query_count
+                    if type(grant) is CapabilityGrant
+                    and type(grant.query_count) is int
+                    and grant.query_count >= 0
+                    else 0
+                )
+                self._query_counts.setdefault(grant_id, initial_count)
+
+    def _register_runtime_locks(
+        self,
+        runtime_locks: Mapping[str, VerifiedRuntimeLock],
+    ) -> None:
+        with self._state_lock:
+            for grant_id, runtime_lock in runtime_locks.items():
+                runtime_identity = runtime_lock.sha256
+                bound = self._runtime_locks.get(grant_id)
+                if bound is not None and bound != runtime_identity:
+                    raise EvaluationBoundaryError(
+                        "runtime lock differs from authoritative binding"
+                    )
+                self._runtime_locks[grant_id] = runtime_identity
+
+    def _require_runtime_lock(
+        self,
+        grant_id: str,
+        runtime_lock: VerifiedRuntimeLock,
+    ) -> None:
+        with self._state_lock:
+            if self._runtime_locks.get(grant_id) != runtime_lock.sha256:
+                raise EvaluationBoundaryError(
+                    "runtime lock differs from authoritative binding"
+                )
+
+    def _bind_final_state(self, state: FinalCapabilityState) -> None:
+        with self._state_lock:
+            if self._final_state is None:
+                self._final_state = state
+            elif self._final_state is not state:
+                raise EvaluationBoundaryError(
+                    "final capability differs from authoritative state"
+                )
+
+    def _transition_final(
+        self,
+        expected: FinalCapabilityState,
+        successor: FinalCapabilityState,
+        *,
+        message: str,
+    ) -> None:
+        with self._state_lock:
+            if self._final_state is not expected:
+                raise EvaluationBoundaryError(message)
+            self._final_state = successor
+
+    def _get_final_state(self) -> FinalCapabilityState:
+        with self._state_lock:
+            if self._final_state is None:
+                raise EvaluationBoundaryError("final capability state is unavailable")
+            return self._final_state
+
+
 @dataclass(frozen=True, slots=True)
 class FinalCapabilityTerminal:
     """Mechanism-only final-capability state; it grants no sealed-final access."""
 
     state: FinalCapabilityState = FinalCapabilityState.LOCKED
+    _authority: CapabilityAuthority = field(
+        default_factory=CapabilityAuthority,
+        repr=False,
+        compare=False,
+        kw_only=True,
+    )
 
     def __post_init__(self) -> None:
-        self._validated_state()
+        state = self._validated_state()
+        if type(self._authority) is not CapabilityAuthority:
+            raise EvaluationBoundaryError("final capability authority is invalid")
+        self._authority._bind_final_state(state)
 
     def unlock(self) -> FinalCapabilityTerminal:
         """Return the sole valid successor of a locked capability."""
@@ -97,7 +182,15 @@ class FinalCapabilityTerminal:
             raise EvaluationBoundaryError(
                 "final capability unlock transition is invalid"
             )
-        return FinalCapabilityTerminal(FinalCapabilityState.UNLOCKED)
+        self._authority._transition_final(
+            FinalCapabilityState.LOCKED,
+            FinalCapabilityState.UNLOCKED,
+            message="final capability unlock transition is invalid",
+        )
+        return FinalCapabilityTerminal(
+            FinalCapabilityState.UNLOCKED,
+            _authority=self._authority,
+        )
 
     def consume(self) -> FinalCapabilityTerminal:
         """Return the terminal successor of an unlocked capability."""
@@ -106,7 +199,15 @@ class FinalCapabilityTerminal:
             raise EvaluationBoundaryError(
                 "final capability consume transition is invalid"
             )
-        return FinalCapabilityTerminal(FinalCapabilityState.CONSUMED)
+        self._authority._transition_final(
+            FinalCapabilityState.UNLOCKED,
+            FinalCapabilityState.CONSUMED,
+            message="final capability consume transition is invalid",
+        )
+        return FinalCapabilityTerminal(
+            FinalCapabilityState.CONSUMED,
+            _authority=self._authority,
+        )
 
     def allow_research_action(
         self,
@@ -117,7 +218,7 @@ class FinalCapabilityTerminal:
         state = self._validated_state()
         if type(action) is not FinalResearchAction:
             raise EvaluationBoundaryError("final research action is invalid")
-        if state is not FinalCapabilityState.LOCKED:
+        if self._authority._get_final_state() is not FinalCapabilityState.LOCKED:
             raise EvaluationBoundaryError(
                 "research is frozen after final capability unlock"
             )
@@ -141,43 +242,54 @@ _PRINCIPAL_ROLES = {
 class EvaluationBroker:
     """In-memory fail-closed authorization and query-budget boundary."""
 
-    __slots__ = ("_grants", "_query_counts", "_resources", "_state_lock")
+    __slots__ = ("_authority", "_grants", "_resources")
 
     def __init__(
         self,
         grants: Mapping[str, CapabilityGrant],
         resources: SplitGrantRegistry,
+        *,
+        authority: CapabilityAuthority | None = None,
+        runtime_locks: Mapping[str, VerifiedRuntimeLock] | None = None,
     ) -> None:
         if not isinstance(grants, Mapping):
             raise EvaluationBoundaryError("capability grant registry is invalid")
         if not isinstance(resources, SplitGrantRegistry):
             raise EvaluationBoundaryError("split resource registry is invalid")
         copied = dict(grants)
-        counts = {
-            grant_id: (
-                grant.query_count
-                if type(grant) is CapabilityGrant
-                and type(grant.query_count) is int
-                and grant.query_count >= 0
-                else 0
-            )
-            for grant_id, grant in copied.items()
-        }
+        if authority is not None and type(authority) is not CapabilityAuthority:
+            raise EvaluationBoundaryError("capability authority is invalid")
+        if runtime_locks is not None and not isinstance(runtime_locks, Mapping):
+            raise EvaluationBoundaryError("runtime lock registry is invalid")
+        copied_runtime_locks = dict(runtime_locks or {})
+        if any(
+            grant_id not in copied or type(runtime_lock) is not VerifiedRuntimeLock
+            for grant_id, runtime_lock in copied_runtime_locks.items()
+        ):
+            raise EvaluationBoundaryError("runtime lock registry is invalid")
+        shared_authority = authority or CapabilityAuthority()
+        shared_authority._register_grants(copied)
+        shared_authority._register_runtime_locks(copied_runtime_locks)
+        self._authority = shared_authority
         self._grants = MappingProxyType(copied)
-        self._query_counts = counts
         self._resources = resources
-        self._state_lock = Lock()
 
     def __repr__(self) -> str:
         return f"EvaluationBroker(grants={len(self._grants)})"
 
+    @property
+    def authority(self) -> CapabilityAuthority:
+        """Return the shareable in-process authority used by this broker."""
+
+        return self._authority
+
     def query_count(self, grant_id: str) -> int:
         """Return broker-owned execution-query consumption for one grant."""
 
-        with self._state_lock:
-            if grant_id not in self._query_counts:
+        with self._authority._state_lock:
+            if grant_id not in self._grants:
                 raise EvaluationBoundaryError("capability grant is unavailable")
-            return self._query_counts[grant_id]
+            return self._authority._query_counts[grant_id]
 
     def authorize_runtime(
         self,
@@ -191,6 +303,14 @@ class EvaluationBroker:
 
         if type(runtime_lock) is not VerifiedRuntimeLock:
             raise EvaluationBoundaryError("runtime lock is invalid")
+        if type(request) is not EvaluationRequest:
+            raise EvaluationBoundaryError("evaluation request is invalid")
+        if request.capability_grant_id not in self._grants:
+            raise EvaluationBoundaryError("capability grant is unavailable")
+        self._authority._require_runtime_lock(
+            request.capability_grant_id,
+            runtime_lock,
+        )
         runtime_lock.verify()
         return self.authorize(request, principal=principal, token=token)
 
@@ -205,7 +325,7 @@ class EvaluationBroker:
 
         if type(request) is not EvaluationRequest:
             raise EvaluationBoundaryError("evaluation request is invalid")
-        with self._state_lock:
+        with self._authority._state_lock:
             grant = self._grants.get(request.capability_grant_id)
             if grant is None:
                 raise EvaluationBoundaryError("capability grant is unavailable")
@@ -235,7 +355,7 @@ class EvaluationBroker:
             if grant.state != "active":
                 raise EvaluationBoundaryError("capability grant is inactive")
 
-            count = self._query_counts[request.capability_grant_id]
+            count = self._authority._query_counts[request.capability_grant_id]
             if count >= grant.query_limit:
                 raise EvaluationBoundaryError("capability query budget is exhausted")
             resource = self._resources.resolve(request)
@@ -245,7 +365,7 @@ class EvaluationBroker:
             ):
                 raise EvaluationBoundaryError("split resource must be opaque")
 
-            self._query_counts[request.capability_grant_id] = count + 1
+            self._authority._query_counts[request.capability_grant_id] = count + 1
             return resource
 
     @staticmethod
@@ -276,6 +396,7 @@ class EvaluationBroker:
 
 
 __all__ = [
+    "CapabilityAuthority",
     "CapabilityGrant",
     "EvaluationBroker",
     "FinalCapabilityState",
