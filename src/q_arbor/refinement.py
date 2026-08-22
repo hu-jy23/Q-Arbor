@@ -53,6 +53,45 @@ def freeze_prompt_snapshot(mapping: Mapping[str, Any]) -> PromptSnapshot:
     return PromptSnapshot._freeze(mapping)
 
 
+def refinement_signature(snapshot: PromptSnapshot) -> str:
+    """Return the canonical identity of one frozen refinement context."""
+
+    body = snapshot.to_dict()
+    family_id = require_identifier(body["family_id"], "snapshot family_id")
+    scope = body["scope"]
+    if scope is None:
+        raise ValueError("snapshot scope is required for refinement signature")
+    user_prompt_sha256 = require_sha256(
+        body["user_prompt_sha256"], "snapshot user_prompt_sha256"
+    )
+    return hashlib.sha256(canonical_normalized_bytes({
+        "family_id": family_id,
+        "scope": scope,
+        "user_prompt_sha256": user_prompt_sha256,
+    })).hexdigest()
+
+
+def _proposal_set(proposal: Mapping[str, Any], field: str) -> list[str]:
+    values = proposal.get(field, [])
+    if not isinstance(values, list):
+        raise ValueError(f"proposal {field} must be a list")
+    return sorted({require_identifier(value, f"proposal {field} item") for value in values})
+
+
+def _proposal_hash_set(proposal: Mapping[str, Any], field: str) -> list[str]:
+    values = proposal.get(field, [])
+    if not isinstance(values, list):
+        raise ValueError(f"proposal {field} must be a list")
+    return sorted({require_sha256(value, f"proposal {field} item") for value in values})
+
+
+def _snapshot_set(snapshot: PromptSnapshot, field: str) -> set[str]:
+    return {
+        require_identifier(value, f"snapshot {field} item")
+        for value in snapshot.to_dict()[field]
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class DevelopmentCycleTrace:
     snapshot: PromptSnapshot
@@ -71,6 +110,16 @@ def run_development_cycle(
     """Freeze and consume one development snapshot through typed callbacks."""
 
     snapshot = freeze_prompt_snapshot(snapshot_mapping)
+    ancestors = _proposal_set(proposal, "ancestor_insight_ids")
+    refuted = _proposal_set(proposal, "refuted_insight_ids")
+    selected = _snapshot_set(snapshot, "selected_insight_ids")
+    if selected & set(refuted):
+        raise ValueError("selected and refuted insights overlap")
+    if not set(ancestors).issubset(selected | set(refuted)):
+        raise ValueError("proposal does not account for every ancestor insight")
+    known_failed = _proposal_hash_set(proposal, "known_failed_signatures")
+    if refinement_signature(snapshot) in known_failed:
+        raise ValueError("proposal repeats a known failed refinement signature")
     node_id = require_identifier(proposal["node_id"], "proposal node_id")
     attempt_id = require_identifier(proposal["attempt_id"], "proposal attempt_id")
     expected_request_id = require_identifier(proposal["request_id"], "proposal request_id")
@@ -91,4 +140,7 @@ def run_development_cycle(
     return DevelopmentCycleTrace(snapshot, request, result, node)
 
 
-__all__ = ["DevelopmentCycleTrace", "PromptSnapshot", "freeze_prompt_snapshot", "run_development_cycle"]
+__all__ = [
+    "DevelopmentCycleTrace", "PromptSnapshot", "freeze_prompt_snapshot",
+    "refinement_signature", "run_development_cycle",
+]
