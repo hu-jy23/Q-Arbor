@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from q_arbor.evaluation import EvaluationBoundaryError, EvaluationRequest
+from q_arbor.evaluation import (
+    EvaluationBoundaryError,
+    EvaluationIntegrityError,
+    EvaluationRequest,
+    VerifiedRuntimeLock,
+)
 from q_arbor.firewall import (
     CapabilityGrant,
     EvaluationBroker,
@@ -16,7 +21,12 @@ from q_arbor.firewall import (
     SplitGrant,
     SplitGrantRegistry,
 )
-from tests.evaluation_helpers import make_request, validated_synthetic_components
+from tests.evaluation_helpers import (
+    RuntimeFixture,
+    make_request,
+    runtime_fixture,
+    validated_synthetic_components,
+)
 
 
 _CAPABILITY_TOKEN = b"qualification capability token"
@@ -143,6 +153,100 @@ def _broker(
             }
         ),
     )
+
+
+def _runtime_authorization_case(
+    tmp_path: Path,
+) -> tuple[EvaluationRequest, EvaluationBroker, object, RuntimeFixture]:
+    _, _, contract, _, receipt = validated_synthetic_components(tmp_path / "case")
+    request = make_request(contract, receipt)
+    manifest = contract.to_dict()["data"]["splits"]["development"][
+        "manifest_sha256"
+    ]
+    handle = object()
+    runtime = runtime_fixture(tmp_path / "runtime", contract)
+    return request, _broker(request, manifest, handle), handle, runtime
+
+
+def test_broker_runtime_authorization_rejects_evaluator_byte_tamper(
+    tmp_path: Path,
+) -> None:
+    request, broker, _, runtime = _runtime_authorization_case(tmp_path)
+    runtime.evaluator_path.write_bytes(b"tampered evaluator\n")
+
+    with pytest.raises(EvaluationIntegrityError, match="runtime artifacts"):
+        broker.authorize_runtime(
+            request,
+            runtime_lock=runtime.lock,
+            principal="executor",
+            token=_CAPABILITY_TOKEN,
+        )
+
+    assert broker.query_count(request.capability_grant_id) == 0
+
+
+def test_broker_runtime_authorization_rejects_config_byte_tamper(
+    tmp_path: Path,
+) -> None:
+    request, broker, _, runtime = _runtime_authorization_case(tmp_path)
+    runtime.config_path.write_bytes(b'{}')
+
+    with pytest.raises(EvaluationIntegrityError, match="runtime artifacts"):
+        broker.authorize_runtime(
+            request,
+            runtime_lock=runtime.lock,
+            principal="executor",
+            token=_CAPABILITY_TOKEN,
+        )
+
+    assert broker.query_count(request.capability_grant_id) == 0
+
+
+def test_broker_runtime_authorization_rejects_forged_untyped_lock(
+    tmp_path: Path,
+) -> None:
+    request, broker, _, _ = _runtime_authorization_case(tmp_path)
+
+    class ForgedRuntimeLock:
+        def verify(self) -> None:
+            return None
+
+    for runtime_lock in (object(), ForgedRuntimeLock()):
+        with pytest.raises(EvaluationBoundaryError, match="runtime lock"):
+            broker.authorize_runtime(
+                request,
+                runtime_lock=runtime_lock,  # type: ignore[arg-type]
+                principal="executor",
+                token=_CAPABILITY_TOKEN,
+            )
+
+    assert broker.query_count(request.capability_grant_id) == 0
+
+
+def test_broker_runtime_authorization_runs_existing_checks_and_consumes_one(
+    tmp_path: Path,
+) -> None:
+    request, broker, handle, runtime = _runtime_authorization_case(tmp_path)
+
+    with pytest.raises(EvaluationBoundaryError, match="capability"):
+        broker.authorize_runtime(
+            request,
+            runtime_lock=runtime.lock,
+            principal="executor",
+            token=b"forged capability token",
+        )
+    assert broker.query_count(request.capability_grant_id) == 0
+
+    assert (
+        broker.authorize_runtime(
+            request,
+            runtime_lock=runtime.lock,
+            principal="executor",
+            token=_CAPABILITY_TOKEN,
+        )
+        is handle
+    )
+    assert broker.query_count(request.capability_grant_id) == 1
 
 
 def test_broker_rejects_forged_grant_without_spending_budget(

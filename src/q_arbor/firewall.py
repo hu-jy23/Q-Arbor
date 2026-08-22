@@ -12,7 +12,11 @@ from hashlib import sha256
 from threading import Lock
 from types import MappingProxyType
 
-from q_arbor.evaluation import EvaluationBoundaryError, EvaluationRequest
+from q_arbor.evaluation import (
+    EvaluationBoundaryError,
+    EvaluationRequest,
+    VerifiedRuntimeLock,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +178,21 @@ class EvaluationBroker:
             if grant_id not in self._query_counts:
                 raise EvaluationBoundaryError("capability grant is unavailable")
             return self._query_counts[grant_id]
+
+    def authorize_runtime(
+        self,
+        request: EvaluationRequest,
+        *,
+        runtime_lock: VerifiedRuntimeLock,
+        principal: str,
+        token: bytes,
+    ) -> object:
+        """Verify the live runtime before consuming launch authorization."""
+
+        if type(runtime_lock) is not VerifiedRuntimeLock:
+            raise EvaluationBoundaryError("runtime lock is invalid")
+        runtime_lock.verify()
+        return self.authorize(request, principal=principal, token=token)
 
     def authorize(
         self,
