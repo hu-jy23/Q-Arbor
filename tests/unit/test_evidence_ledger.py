@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -193,3 +194,20 @@ def test_evidence_ledger_verify_rejects_duplicate_event_ids(tmp_path: Path) -> N
 
     with pytest.raises(EvaluationIntegrityError, match="duplicate event_id"):
         ledger.verify()
+
+
+@pytest.mark.parametrize("challenge", ["forged", "stale"])
+def test_evidence_ledger_replay_requires_current_verified_snapshot(
+    tmp_path: Path,
+    challenge: str,
+) -> None:
+    ledger = EvidenceLedger.create(tmp_path / "ledger")
+    _append_trace(ledger)
+    verified = ledger.verify()
+    if challenge == "forged":
+        verified = replace(verified, last_sequence=99)
+    else:
+        ledger.append(_event("node.updated", payload={"status": "done"}))
+
+    with pytest.raises(EvaluationIntegrityError, match="current verified"):
+        ledger.replay(verified)

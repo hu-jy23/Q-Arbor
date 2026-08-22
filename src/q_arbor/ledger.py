@@ -314,6 +314,10 @@ class EvidenceLedger:
     def replay(self, verified: VerifiedLedger) -> LedgerReplay:
         if not isinstance(verified, VerifiedLedger):
             raise EvaluationIntegrityError("ledger replay requires verified events")
+        if verified != self.verify():
+            raise EvaluationIntegrityError(
+                "ledger replay requires the current verified on-disk events"
+            )
         if (
             verified.run_id is None
             or verified.contract_hash is None
