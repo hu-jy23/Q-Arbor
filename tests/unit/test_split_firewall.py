@@ -426,24 +426,24 @@ def test_e5_final_capability_rejects_untyped_research_actions(
 
 
 @pytest.mark.parametrize("action", list(FinalResearchAction))
-def test_e5_consumed_final_capability_rejects_research_actions(
-    action: FinalResearchAction,
-) -> None:
-    consumed = FinalCapabilityTerminal(FinalCapabilityState.CONSUMED)
-
-    with pytest.raises(EvaluationBoundaryError, match="consumed.*terminal"):
-        consumed.allow_research_action(action)
-
-
-@pytest.mark.parametrize("action", list(FinalResearchAction))
 @pytest.mark.parametrize(
     "state",
-    [FinalCapabilityState.LOCKED, FinalCapabilityState.UNLOCKED],
+    [FinalCapabilityState.UNLOCKED, FinalCapabilityState.CONSUMED],
 )
-def test_e5_research_actions_remain_open_before_final_consumption(
+def test_e5_final_unlock_freezes_research_actions(
     state: FinalCapabilityState,
     action: FinalResearchAction,
 ) -> None:
     capability = FinalCapabilityTerminal(state)
+
+    with pytest.raises(EvaluationBoundaryError, match="research is frozen"):
+        capability.allow_research_action(action)
+
+
+@pytest.mark.parametrize("action", list(FinalResearchAction))
+def test_e5_research_actions_remain_open_while_final_is_locked(
+    action: FinalResearchAction,
+) -> None:
+    capability = FinalCapabilityTerminal(FinalCapabilityState.LOCKED)
 
     assert capability.allow_research_action(action) is action

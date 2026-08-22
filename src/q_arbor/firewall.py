@@ -108,14 +108,14 @@ class FinalCapabilityTerminal:
         self,
         action: FinalResearchAction,
     ) -> FinalResearchAction:
-        """Fail closed for untyped actions and every action after consumption."""
+        """Fail closed for untyped actions and every action after final unlock."""
 
         state = self._validated_state()
         if type(action) is not FinalResearchAction:
             raise EvaluationBoundaryError("final research action is invalid")
-        if state is FinalCapabilityState.CONSUMED:
+        if state is not FinalCapabilityState.LOCKED:
             raise EvaluationBoundaryError(
-                "final capability is consumed and research is terminal"
+                "research is frozen after final capability unlock"
             )
         return action
 
