@@ -28,6 +28,7 @@ from q_arbor.evaluation import (
     ReasonCode,
     ValidatedCandidate,
     freeze_candidate_validation,
+    freeze_evaluation_result,
 )
 from q_arbor.evaluation.candidate import _classify_candidate_surface
 
@@ -314,6 +315,7 @@ class HM1SplitData:
         "_data_snapshot_sha256",
         "_engine_output",
         "_initialized",
+        "_role",
         "_split_manifest_sha256",
         "_untrusted_failure_detail",
     )
@@ -324,8 +326,12 @@ class HM1SplitData:
         data_snapshot_sha256: str,
         split_manifest_sha256: str,
         engine_output: HM1EngineOutput,
+        role: str = "development",
         untrusted_failure_detail: str | None = None,
     ) -> None:
+        if role not in {"development", "gate"}:
+            raise EvaluationSchemaError("HM1 aggregate role is invalid")
+        object.__setattr__(self, "_role", role)
         object.__setattr__(self, "_data_snapshot_sha256", data_snapshot_sha256)
         object.__setattr__(self, "_split_manifest_sha256", split_manifest_sha256)
         object.__setattr__(self, "_engine_output", engine_output)
@@ -339,7 +345,7 @@ class HM1SplitData:
 
     @property
     def role(self) -> str:
-        return "development"
+        return self._role
 
     @property
     def data_snapshot_sha256(self) -> str:
@@ -353,6 +359,93 @@ class HM1SplitData:
         if self._untrusted_failure_detail is not None:
             raise RuntimeError(self._untrusted_failure_detail)
         return self._engine_output
+
+
+class HM1AuthorizedAggregate:
+    """Closed split wrapper for one broker-authorized aggregate output."""
+
+    __slots__ = ("_artifacts", "_binding", "_contract", "_data", "_plugin", "_request")
+
+    @classmethod
+    def _create(cls, *, plugin, request, contract, binding, data, artifacts):
+        instance = cls.__new__(cls)
+        object.__setattr__(instance, "_plugin", plugin)
+        object.__setattr__(instance, "_request", request)
+        object.__setattr__(instance, "_contract", contract)
+        object.__setattr__(instance, "_binding", binding)
+        object.__setattr__(instance, "_data", data)
+        object.__setattr__(instance, "_artifacts", artifacts)
+        return instance
+
+    @property
+    def request(self):
+        return self._request
+
+    @property
+    def contract(self):
+        return self._contract
+
+    @property
+    def binding(self):
+        return self._binding
+
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def artifacts(self):
+        return self._artifacts
+
+    def _provenance(self):
+        candidate = self.binding.candidate_receipt.candidate
+        contract = self.contract.to_dict()
+        return {
+            "candidate_sha256": candidate.candidate_hash,
+            "code_commit": candidate.code_commit,
+            "data_snapshot_sha256": contract["data"]["snapshot_sha256"],
+            "split_manifest_hash": self.request.split_manifest_hash,
+            "contract_hash": self.contract.sha256,
+            "plugin_code_sha256": self.binding.plugin_identity.code_sha256,
+            "evaluator_sha256": self.binding.runtime_lock.evaluator_sha256,
+            "config_sha256": self.binding.runtime_lock.config_sha256,
+            "seed": self.binding.seed,
+        }
+
+    def make_result(self, **kwargs):
+        payload = {
+            "result_id": self.binding.result_id, "request_id": self.request.request_id,
+            "status": kwargs["status"], "split_role": self.request.split_role,
+            "primary_metric": kwargs["primary_metric"].to_dict(),
+            "constraints": [item.to_dict() for item in kwargs["constraints"]],
+            "diagnostics": [item.to_dict() for item in kwargs["diagnostics"]],
+            "fold_metrics": list(kwargs["fold_metrics"]), "costs": dict(kwargs["costs"]),
+            "checks": [item.to_dict() for item in kwargs["checks"]],
+            "artifacts": [item.to_dict() for item in kwargs.get("artifacts", ())],
+            "provenance": self._provenance(),
+            "failure": None if kwargs.get("failure") is None else kwargs["failure"].to_dict(),
+            "statistical_diagnostics": [],
+            "warnings": [str(item) for item in kwargs.get("warnings", ())],
+        }
+        return freeze_evaluation_result(payload, binding=self.binding)
+
+
+def make_hm1_authorized_aggregate(
+    *, plugin, request, contract, binding, engine_output, artifacts,
+    untrusted_failure_detail: str | None = None,
+) -> HM1AuthorizedAggregate:
+    if request.split_role not in {"development", "gate"}:
+        raise EvaluationSchemaError("HM1 aggregate factory accepts development/gate only")
+    split = contract.to_dict()["data"]["splits"][request.split_role]
+    data = HM1SplitData(
+        data_snapshot_sha256=contract.to_dict()["data"]["snapshot_sha256"],
+        split_manifest_sha256=split["manifest_sha256"], engine_output=engine_output,
+        role=request.split_role, untrusted_failure_detail=untrusted_failure_detail,
+    )
+    return HM1AuthorizedAggregate._create(
+        plugin=plugin, request=request, contract=contract, binding=binding,
+        data=data, artifacts=artifacts,
+    )
 
 
 def _is_docstring(statement: ast.stmt) -> bool:
@@ -662,12 +755,14 @@ class HM1FuturesPlugin:
             or binding.plugin_identity != self.identity
         ):
             raise EvaluationIntegrityError("HM1 split binding mismatch")
-        development = contract["data"]["splits"]["development"]
+        split_definition = contract["data"]["splits"].get(split.data.role)
+        if not isinstance(split_definition, Mapping):
+            raise EvaluationIntegrityError("HM1 split definition is unavailable")
         if (
-            split.data.role != "development"
-            or split.request.split_role != "development"
+            split.data.role not in {"development", "gate"}
+            or split.request.split_role != split.data.role
             or split.data.data_snapshot_sha256 != contract["data"]["snapshot_sha256"]
-            or split.data.split_manifest_sha256 != development["manifest_sha256"]
+            or split.data.split_manifest_sha256 != split_definition["manifest_sha256"]
             or split.request.split_manifest_hash != split.data.split_manifest_sha256
         ):
             raise EvaluationIntegrityError("HM1 development identity mismatch")
@@ -839,4 +934,7 @@ class HM1FuturesPlugin:
         return EvaluationSummary.from_result(result)
 
 
-__all__ = ["HM1EngineOutput", "HM1FuturesPlugin", "HM1SplitData"]
+__all__ = [
+    "HM1AuthorizedAggregate", "HM1EngineOutput", "HM1FuturesPlugin", "HM1SplitData",
+    "make_hm1_authorized_aggregate",
+]
