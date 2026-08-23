@@ -21,6 +21,8 @@ from tests.hypothesis_helpers import canonical_json, node_draft_kwargs, scope_ma
 def _snapshot(
     case, request, scope, *, selected_insight_ids=(), evidence_hashes=(),
     failure_summary=None, user="refine:synthetic",
+    branch: str = "exec/node.qualification",
+    worktree: str = "worktrees/node.qualification",
 ):
     system = "dispatch:development"
     snapshot = {
@@ -29,7 +31,7 @@ def _snapshot(
         "attempt_id": request.attempt_id, "tree_revision": 0, "ledger_sequence": 1,
         "contract_hash": request.contract_hash, "candidate_id": "candidate.qualification",
         "family_id": "family.node.qualification", "scope": scope,
-        "base_commit": None, "branch": None, "worktree": None,
+        "base_commit": None, "branch": branch, "worktree": worktree,
         "system_template_id": "q-arbor.synthetic.v1",
         "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
         "user_prompt_sha256": hashlib.sha256(user.encode()).hexdigest(),
@@ -129,7 +131,8 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
               {"request_id": req.request_id, "result_id": result_id})
         value = case.plugin.evaluate(case.receipt, case.split)
         event("event.complete.qualification", "evaluation.completed", "evaluator",
-              {"request_id": req.request_id, "result_id": value.result_id})
+              {"request_id": req.request_id, "result_id": value.result_id,
+               "artifact_refs": [ref.to_dict() for ref in value.artifacts]})
         return value
 
     def decide(req, value):
@@ -152,6 +155,13 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
     trace = run_development_cycle(proposal, snapshot, dispatch, evaluate, decide)
     assert consumed and consumed[0].sha256 == trace.snapshot.sha256
     consumed_snapshot = consumed[0].to_dict()
+    result_artifact_refs = [ref.to_dict() for ref in trace.result.artifacts]
+    report = {
+        "node_id": trace.node.id,
+        "code_ref": consumed_snapshot["branch"],
+        "result_id": trace.result.result_id,
+        "artifact_refs": result_artifact_refs,
+    }
     ancestor_evidence_hash = hashlib.sha256(
         b"insight.parent.failed:evidence"
     ).hexdigest()
@@ -186,6 +196,18 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
     assert trace.node.id == request.node_id and trace.request.attempt_id in trace.node.attempt_ids
     assert trace.result.request_id == request.request_id and trace.result.result_id == result_id
     assert trace.node.evidence_refs[0]["result_id"] == trace.result.result_id
+    assert consumed_snapshot["branch"] == "exec/node.qualification"
+    assert consumed_snapshot["worktree"] == "worktrees/node.qualification"
+    assert report["node_id"] == request.node_id
+    assert report["code_ref"] == consumed_snapshot["branch"]
+    assert report["result_id"] == trace.result.result_id
+    assert report["artifact_refs"] == result_artifact_refs
+    events = ledger.verify().events
+    assert all(item["node_id"] == request.node_id for item in events)
+    evidence = trace.node.evidence_refs[0]
+    completed = next(item for item in events if item["event_type"] == "evaluation.completed")
+    assert evidence["result_id"] == completed["payload"]["result_id"] == report["result_id"]
+    assert list(evidence["artifact_refs"]) == list(completed["payload"]["artifact_refs"]) == report["artifact_refs"]
     assert broker.query_count(request.capability_grant_id) == 1
     assert [item["event_type"] for item in ledger.verify().events] == [
         "hypothesis.proposed", "attempt.dispatched", "evaluation.requested",
