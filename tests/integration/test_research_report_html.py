@@ -98,9 +98,14 @@ def test_research_report_escapes_untrusted_text_and_has_mobile_css(tmp_path: Pat
     assert html.escape('<img src="x">& evil') in with_report
     assert '<img src="x">& evil' not in with_report
     assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in with_report
-    assert "grid-template-columns:minmax(0,1fr)" in with_report.replace(" ", "")
+    css = with_report.replace(" ", "")
+    assert "grid-template-columns:minmax(0,1fr)" in css
     assert "@media(max-width:720px)" in with_report.replace(" ", "")
-    assert "overflow-wrap:anywhere" in with_report.replace(" ", "")
-    assert "min-width" not in with_report
+    assert ".badge{display:inline-block;border-radius:999px;padding:4px10px;font-weight:700;margin:3px;background:#e8edf5;overflow-wrap:anywhere}" in css and ".evidence{scroll-margin-top:1rem;border-top:1pxsolid#e0e6ef;padding:10px0;min-width:0;overflow-wrap:anywhere}" in css
+    assert ".grid>*{min-width:0}" in css
+    assert ".table-wrap{max-width:100%;overflow-x:auto}" in css
+    assert "table{width:100%;table-layout:fixed;" in css
+    assert "a{color:#075eaa;text-underline-offset:2px;overflow-wrap:anywhere}" in css
+    assert "min-width:1px" not in css and "min-width:100%" not in css
     assert 'href="#evidence-tree-source"' in with_report
     assert "artifact_id" in with_report and "research_head sequence" in with_report
