@@ -3,7 +3,9 @@ import os
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Mapping, cast
+from q_arbor.evaluation import EvaluationBinding, EvaluationResult, load_evaluation_result
 from q_arbor.evaluation.codec import (
     atomic_write,
     canonical_json_bytes,
@@ -121,9 +123,65 @@ def _ledger_event(
             "timestamp": "2026-08-23T00:00:00Z", "event_type": event_type, "actor": actor,
             "contract_hash": contract_hash, "node_id": node_id, "attempt_id": attempt_id,
             "split_role": "none", "payload": dict(payload)}
+
+def _completed_result(
+    events: tuple[Mapping[str, Any], ...], *, root: Path, binding: EvaluationBinding,
+    run_id: str, contract_hash: str, node_id: str, attempt_id: str,
+) -> EvaluationResult | None:
+    matches = [event for event in events if event["event_type"] == "evaluation.completed"
+               and event["node_id"] == node_id and event["attempt_id"] == attempt_id]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise EvaluationIntegrityError("evaluation.completed identity is not unique")
+    event = matches[0]
+    if event["run_id"] != run_id or event["contract_hash"] != contract_hash:
+        raise EvaluationIntegrityError("evaluation.completed identity differs")
+    payload = cast(Mapping[str, Any], event["payload"])
+    ref = payload.get("result_ref", payload)
+    if not isinstance(ref, Mapping):
+        raise EvaluationIntegrityError("evaluation.completed result reference is invalid")
+    relative = ref.get("relative_path", ref.get("result_path"))
+    digest = ref.get("sha256", ref.get("result_sha256"))
+    if not isinstance(relative, str) or not isinstance(digest, str):
+        raise EvaluationIntegrityError("evaluation.completed result reference is incomplete")
+    path = (root / relative).absolute()
+    try:
+        path.relative_to(root.absolute())
+    except ValueError as exc:
+        raise EvaluationIntegrityError("evaluation result escapes session") from exc
+    if path.is_symlink() or not path.is_file() or sha256(path.read_bytes()).hexdigest() != digest:
+        raise EvaluationIntegrityError("evaluation result artifact is incomplete")
+    expected_request = payload.get("request_id")
+    expected_result = payload.get("result_id")
+    if expected_request != binding.request.request_id or expected_result != binding.result_id:
+        raise EvaluationIntegrityError("evaluation.completed result identity differs")
+    if binding.request.run_id != run_id or binding.request.contract_hash != contract_hash:
+        raise EvaluationIntegrityError("evaluation binding identity differs")
+    result = load_evaluation_result(path, binding=binding, expected_sha256=digest)
+    if result.request_id != expected_request or result.result_id != expected_result:
+        raise EvaluationIntegrityError("persisted evaluation result identity differs")
+    return result
+
+def _decision_payload(
+    *, result: EvaluationResult, decision_cb: Callable[[EvaluationResult], Mapping[str, Any]],
+) -> dict[str, Any]:
+    updates = decision_cb(result)
+    if not isinstance(updates, Mapping):
+        raise EvaluationIntegrityError("decision callback must return node updates")
+    updates = dict(updates.get("node_updates", updates.get("updates", updates)))
+    if not isinstance(updates, dict) or updates.get("status") != "done":
+        raise EvaluationIntegrityError("pre-decision updates must complete the node")
+    return updates
 def resume_session(
     path: str | os.PathLike[str], *, ledger: EvidenceLedger, tree: HypothesisTreeStore,
+    binding: EvaluationBinding | None = None,
+    decision_cb: Callable[[EvaluationResult], Mapping[str, Any]] | None = None,
+    evaluation_binding: EvaluationBinding | None = None,
 ) -> ResumeResult:
+    if binding is not None and evaluation_binding is not None and binding is not evaluation_binding:
+        raise EvaluationIntegrityError("multiple evaluation bindings supplied")
+    binding = evaluation_binding or binding
     checkpoint_path = Path(path).absolute()
     checkpoint = _read_checkpoint(checkpoint_path)
     mapping = checkpoint.to_dict()
@@ -157,12 +215,26 @@ def resume_session(
         reconciled_id = f"resume.reconciled.{attempt_id}"
         interrupted = [event for event in verified.events if event["event_id"] == interrupted_id]
         reconciled = [event for event in verified.events if event["event_id"] == reconciled_id]
+        decision_id = f"decision.recorded.{attempt_id}"
+        decisions = [event for event in verified.events if event["event_id"] == decision_id]
         node = tree.load().get_node(node_id)
-        if len(reconciled) > 1 or len(interrupted) > 1 or (reconciled and not interrupted):
+        if len(reconciled) > 1 or len(interrupted) > 1 or len(decisions) > 1 or (reconciled and not interrupted):
             raise EvaluationIntegrityError("resume events are inconsistent")
+        completed = [event for event in verified.events if event["event_type"] == "evaluation.completed"
+                     and event["node_id"] == node_id and event["attempt_id"] == attempt_id]
+        if len(completed) > 1 or (completed and binding is None):
+            raise EvaluationIntegrityError("completed evaluation requires a verified binding")
+        result = _completed_result(
+            verified.events, root=root, binding=binding, run_id=cast(str, mapping["run_id"]),
+            contract_hash=cast(str, mapping["contract_hash"]), node_id=node_id, attempt_id=attempt_id,
+        ) if binding is not None else None
+        if decisions and binding is not None and result is None:
+            raise EvaluationIntegrityError("decision has no completed evaluation")
+        if result is not None and node.status == "done" and len(decisions) != 1:
+            raise EvaluationIntegrityError("completed node has no unique decision")
         if reconciled:
-            if node.status != "needs_retry":
-                raise EvaluationIntegrityError("reconciled attempt has a non-retry node")
+            if node.status not in {"needs_retry", "done"}:
+                raise EvaluationIntegrityError("reconciled attempt has an incomplete node")
             continue
         if not interrupted:
             ledger.append(_ledger_event(
@@ -172,7 +244,31 @@ def resume_session(
             ))
             changed = True
             verified = ledger.verify()
-        if node.status == "running":
+        if result is not None and node.status in {"running", "needs_retry"}:
+            if decisions:
+                decision_payload = cast(Mapping[str, Any], decisions[0]["payload"])
+                if decision_payload.get("result_id") != result.result_id:
+                    raise EvaluationIntegrityError("decision result identity differs")
+                updates = decision_payload.get("node_updates")
+                if not isinstance(updates, Mapping):
+                    raise EvaluationIntegrityError("decision node updates are missing")
+                updates = dict(updates)
+            elif decision_cb is not None:
+                updates = _decision_payload(result=result, decision_cb=decision_cb)
+                ledger.append(_ledger_event(
+                    run_id=cast(str, mapping["run_id"]), contract_hash=cast(str, mapping["contract_hash"]),
+                    event_id=decision_id, event_type="decision.recorded", node_id=node_id,
+                    attempt_id=attempt_id, payload={"request_id": result.request_id,
+                                                     "result_id": result.result_id, "node_updates": updates},
+                ))
+                changed = True
+                verified = ledger.verify()
+            else:
+                raise EvaluationIntegrityError("completed evaluation needs a decision callback")
+            tree.apply(TreeMutation.update_node(node_id, updates), expected_revision=tree.load().revision,
+                        idempotency_key=f"resume.decision.{attempt_id}")
+            changed = True
+        elif node.status == "running":
             failure = {"failure_type": "interruption", "summary": "executor interrupted before completion", "evidence_ids": []}
             tree.apply(TreeMutation.update_node(node_id, {
                 "status": "needs_retry", "lifecycle": "needs_retry", "failure": failure,
