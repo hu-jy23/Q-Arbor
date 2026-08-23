@@ -184,7 +184,7 @@ def render_research_report(
                 anchors[evidence_id] = _evidence_anchor(evidence_id, used)
 
     hero = [
-        f'<header class="hero {h(status)}"><p>Q-Arbor partial prototype</p>',
+        f'<header class="hero {h(status)}"><p>Q-Arbor prototype</p>',
         "<h1>Research report</h1>",
         f'<span class="badge {h(status)}">integrity_status={h(status)}</span>',
         f'<span class="badge">claim_scope={h(raw.get("claim_scope"))}</span>',

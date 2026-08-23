@@ -1,4 +1,4 @@
-"""Immutable typed evaluation boundary for the Q-Arbor partial prototype."""
+"""Immutable typed evaluation boundary for the Q-Arbor prototype."""
 
 from __future__ import annotations
 

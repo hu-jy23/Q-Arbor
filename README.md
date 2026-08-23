@@ -1,18 +1,19 @@
 # Q-Arbor
 
-> Status: **Q-Arbor partial prototype**. The name `Q-Arbor prototype` is reserved until the C13 synthetic and HM1 identity gate passes.
+> Status: **Q-Arbor prototype**. C13 naming qualification passed on synthetic and HM1 engineering evidence. This status does not claim benchmark superiority, OOS generalization, statistical control, or trading readiness.
 
-Q-Arbor adapts Arbor's persistent Coordinator and Hypothesis-Tree Refinement substrate to auditable quantitative research. The first implementation checkpoint freezes a quantitative task contract before any research run can start.
+Q-Arbor adapts Arbor's persistent Coordinator and Hypothesis-Tree Refinement substrate to auditable quantitative research. It binds a frozen quantitative task contract, typed hypothesis tree, refinement control path, task plugins, evaluation firewall/evidence ledger, and recovery/report package into one auditable prototype.
 
-## C7 scope
+## Prototype scope
 
-- load strict JSON with duplicate-key and non-finite-number rejection;
-- validate a `QuantResearchContract` against the frozen C6 Draft 2020-12 schema and cross-field invariants;
-- canonicalize Unicode/JSON, freeze an immutable snapshot, and compute a stable SHA-256 contract identity;
-- project only development-safe metadata into Arbor;
-- fail before launch on incomplete time, path, capability, final, or hash configuration.
+- freeze and validate a canonical `QuantResearchContract` before launch;
+- persist a typed Q-Hypothesis Tree with family, scope, evidence, failure, and lineage;
+- execute a bounded propose→dispatch→evaluate→decide refinement path;
+- evaluate synthetic and HM1 candidates through the same typed plugin boundary;
+- enforce split capabilities and append-only evidence-ledger history;
+- recover interrupted sessions and emit auditable ResearchPackage/HTML reports.
 
-C7 does not implement the hypothesis tree, evaluation firewall, plugins, recovery, formal benchmarks, or sealed-final access. Those remain C8–C13 work.
+The C13 qualification covers mechanism and engineering operability. Formal benchmarks, native-baseline comparisons, ablations, repeated statistical experiments, HM2 OOS validation, sealed-final access, and performance conclusions remain later-goal work.
 
 ## Development
 
@@ -32,6 +33,6 @@ q-arbor-contract validate frozen.json
 q-arbor-contract show-hash frozen.json
 ```
 
-`project_to_arbor(...)` returns separate `tree_meta()`, `config_overrides()`, `plugin_overrides()`, and `audit_metadata()` views. Its development evaluation command is a forward contract for C9 and is intentionally not executable in C7.
+`project_to_arbor(...)` returns separate `tree_meta()`, `config_overrides()`, `plugin_overrides()`, and `audit_metadata()` views. Executable evaluation remains behind the typed plugin and capability-broker boundaries.
 
 The tracked `configs/`, `benchmarks/`, `artifacts/`, and `.q-arbor/sessions/` READMEs freeze ownership and data boundaries. Generated artifacts, sessions, and all raw market data remain ignored.

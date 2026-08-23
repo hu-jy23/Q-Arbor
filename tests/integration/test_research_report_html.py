@@ -46,7 +46,7 @@ def test_research_report_is_auditable_fixed_point_and_self_contained(tmp_path: P
     assert audit_research_package(package, tmp_path).integrity_status == "pass"
     assert first == (tmp_path / "reports/research.html").read_text(encoding="utf-8")
     assert first == render_research_report(package, tmp_path)
-    assert "Q-Arbor partial prototype" in first
+    assert "Q-Arbor prototype" in first
     assert "final_state=sealed_unopened" in first
     assert "tree overview" in first.lower()
     assert "failure categories" in first.lower()
