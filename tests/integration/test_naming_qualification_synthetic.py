@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,8 +36,28 @@ def _ref(root: Path, artifact_id: str, relative_path: str, payload: bytes, *, me
             "sha256": hashlib.sha256(payload).hexdigest(), "media_type": media_type}
 
 
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, text=True,
+                          capture_output=True).stdout.strip()
+
+
 def test_synthetic_development_trace_is_durable_and_auditable(tmp_path: Path) -> None:
     case = synthetic_case(tmp_path / "case")
+    branch = "exec/synthetic-success"
+    repo, worktree = tmp_path / "executor-repo", tmp_path / "executor-worktree"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    _git(repo, "config", "user.email", "q-arbor@example.invalid")
+    _git(repo, "config", "user.name", "Q-Arbor test")
+    (repo / "README.md").write_text("synthetic executor fixture\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "seed")
+    trunk_commit = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "worktree", "add", "-b", branch, str(worktree))
+    (worktree / "solution.py").write_text("CANDIDATE = 'synthetic-success'\n", encoding="utf-8")
+    _git(worktree, "add", "solution.py")
+    _git(worktree, "commit", "-m", "implement synthetic candidate")
+    executor_commit = _git(worktree, "rev-parse", "HEAD")
+    assert Path(_git(worktree, "rev-parse", "--show-toplevel")) == worktree
     root = tmp_path / "session"
     ledger = EvidenceLedger.create(root / "ledger")
     tree = HypothesisTreeStore.create(
@@ -54,8 +75,6 @@ def test_synthetic_development_trace_is_durable_and_auditable(tmp_path: Path) ->
     proposal = {"node_id": case.request.node_id, "attempt_id": case.request.attempt_id,
                 "request_id": case.request.request_id, "result_id": case.result.result_id,
                 "ancestor_insight_ids": [], "known_failed_signatures": []}
-    branch = "refs/heads/exec/synthetic-success"
-
     def dispatch(snap):
         draft = node_draft_kwargs(case.request.node_id, parent_id="root", proposal_order=2, scope=scope)
         draft.update(candidate_id="candidate.synthetic.success",
@@ -149,7 +168,8 @@ def test_synthetic_development_trace_is_durable_and_auditable(tmp_path: Path) ->
     _event(ledger, case, "attempt.started.resume", "attempt.started", node_id=resume_id, attempt_id=resume_attempt)
     checkpoint = root / "checkpoint.json"
     save_checkpoint(checkpoint, ledger=ledger, tree=tree, messages_path=messages, phase="development", cycle=1,
-                    git={"trunk_branch": "main", "trunk_commit": "a" * 40, "active_branches": [branch], "worktrees": [branch]},
+                    git={"trunk_branch": "main", "trunk_commit": trunk_commit,
+                         "active_branches": [branch], "worktrees": [str(worktree)]},
                     inflight_attempts=[{"attempt_id": resume_attempt, "node_id": resume_id, "branch": branch,
                                         "started_event_id": "attempt.started.resume", "pid": None}],
                     budget_state={}, capability_state={}, created_at="2026-08-23T00:00:00Z")
@@ -173,8 +193,10 @@ def test_synthetic_development_trace_is_durable_and_auditable(tmp_path: Path) ->
                expected_revision=tree.load().revision, idempotency_key="trace.merge.success")
     _event(ledger, case, "merge.requested.success", "merge.requested", node_id=case.request.node_id,
            attempt_id=case.request.attempt_id, payload={"branch": branch})
+    _git(repo, "merge", "--no-ff", branch, "-m", "merge synthetic candidate")
+    merge_commit = _git(repo, "rev-parse", "HEAD")
     _event(ledger, case, "merge.completed.success", "merge.completed", node_id=case.request.node_id,
-           attempt_id=case.request.attempt_id, payload={"branch": branch, "commit": "a" * 40})
+           attempt_id=case.request.attempt_id, payload={"branch": branch, "commit": merge_commit})
 
     contract_ref = _ref(root, "contract", "contract.json", case.contract.to_json().encode())
     tree_path = root / "tree.json"
@@ -188,7 +210,7 @@ def test_synthetic_development_trace_is_durable_and_auditable(tmp_path: Path) ->
     candidate_ref = _ref(root, "candidate.synthetic", "candidate.json", b"synthetic-candidate")
     summary_ref = _ref(root, "summary.synthetic", "reports/summary.json", b'{"claim_scope":"development_only"}')
     package = {"schema_version": "1.0", "run_id": case.request.run_id, "contract": contract_ref,
-               "selected_candidate": candidate_ref, "selected_commit": "a" * 40, "tree": tree_ref,
+               "selected_candidate": candidate_ref, "selected_commit": executor_commit, "tree": tree_ref,
                "research_head": dict(tree.load().ledger_head),
                "ledger": {"artifact": head_ref, "last_sequence": ledger_head.last_sequence,
                           "last_event_hash": ledger_head.last_event_hash},
