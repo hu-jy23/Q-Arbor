@@ -1,8 +1,8 @@
 """Pure metadata projection into Arbor's development-time seams.
 
 This adapter constructs metadata only.  It neither imports nor invokes Arbor.
-The projected evaluator module is a forward contract owned by C9 and is not an
-executable evaluator in the C7 partial prototype.
+Executable evaluation remains outside this projection adapter and behind the
+typed plugin and capability-broker boundaries.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "q-arbor"
 version = "0.1.0.dev0"
-description = "A partial prototype of an auditable quantitative research harness built on Arbor"
+description = "An auditable quantitative research harness prototype built on Arbor"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
