@@ -409,6 +409,10 @@ class ProvenanceEnvelope(_ImmutableJSON):
     def runner_receipt_sha256(self) -> str:
         return cast(str, self._get("runner_receipt_sha256"))
 
+    @property
+    def candidate_sha256(self) -> str:
+        return cast(str, self._get("candidate_sha256"))
+
 
 class ResultEnvelope(_ImmutableJSON):
     """Metric-neutral decision envelope with task payloads held as artifacts."""
@@ -500,6 +504,14 @@ class ResultEnvelope(_ImmutableJSON):
         return cast(str, self._get("stage_id"))
 
     @property
+    def result_id(self) -> str:
+        return cast(str, self._get("result_id"))
+
+    @property
+    def invocation_id(self) -> str:
+        return cast(str, self._get("invocation_id"))
+
+    @property
     def availability(self) -> str:
         return cast(str, self._get("availability"))
 
@@ -514,6 +526,15 @@ class ResultEnvelope(_ImmutableJSON):
     @property
     def failure(self) -> dict[str, str] | None:
         return cast(dict[str, str] | None, self.to_dict()["failure"])
+
+    @property
+    def output_artifact_refs(self) -> tuple[ArtifactRef, ...]:
+        return tuple(
+            ArtifactRef.from_mapping(item)
+            for item in cast(
+                list[dict[str, Any]], self.to_dict()["output_artifact_refs"]
+            )
+        )
 
     @property
     def provenance(self) -> ProvenanceEnvelope:
