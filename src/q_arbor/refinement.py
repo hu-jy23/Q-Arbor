@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from q_arbor.evaluation import EvaluationRequest, EvaluationResult
 from q_arbor.evaluation.codec import (
+    FrozenJSON,
     JSONValue,
     canonical_normalized_bytes,
     deep_freeze,
@@ -18,6 +19,7 @@ from q_arbor.evaluation.codec import (
     validate_definition,
 )
 from q_arbor.evaluation.values import _ImmutableJSON
+from q_arbor.generality import ControlPathOutcome
 from q_arbor.hypotheses.models import QuantHypothesisNode
 
 
@@ -100,6 +102,18 @@ class DevelopmentCycleTrace:
     node: QuantHypothesisNode
 
 
+@dataclass(frozen=True, slots=True)
+class ProductIntegrationTrace:
+    """Existing development trace plus one B1 general-surface identity bridge."""
+
+    cycle: DevelopmentCycleTrace
+    general: ControlPathOutcome
+    budget_query_count_before: int
+    budget_query_count_after: int
+    report: Mapping[str, FrozenJSON]
+    report_sha256: str
+
+
 def run_development_cycle(
     proposal: Mapping[str, Any],
     snapshot_mapping: Mapping[str, Any],
@@ -140,7 +154,128 @@ def run_development_cycle(
     return DevelopmentCycleTrace(snapshot, request, result, node)
 
 
+def run_product_integration_cycle(
+    proposal: Mapping[str, Any],
+    snapshot_mapping: Mapping[str, Any],
+    dispatch_cb: Callable[[PromptSnapshot], EvaluationRequest],
+    general_evaluate_cb: Callable[[EvaluationRequest], ControlPathOutcome],
+    project_result_cb: Callable[
+        [EvaluationRequest, ControlPathOutcome], EvaluationResult
+    ],
+    decide_cb: Callable[[EvaluationRequest, EvaluationResult], QuantHypothesisNode],
+    *,
+    query_count_cb: Callable[[], int],
+) -> ProductIntegrationTrace:
+    """Bridge the existing refinement cycle to B1 surfaces without new states.
+
+    The existing callbacks retain ownership of capability authorization, Idea Tree
+    mutations, evidence ledger events, and C6-compatible result projection.  This
+    seam verifies that exactly one existing query budget unit is consumed and that
+    the general result/provenance/artifacts remain bound to those product identities.
+    """
+
+    budget_before = query_count_cb()
+    if type(budget_before) is not int or budget_before < 0:
+        raise ValueError("query budget counter is invalid")
+    holder: dict[str, object] = {}
+
+    def evaluate(request: EvaluationRequest) -> EvaluationResult:
+        outcome = general_evaluate_cb(request)
+        if not isinstance(outcome, ControlPathOutcome):
+            raise ValueError("general evaluation did not return a control-path outcome")
+        if outcome.result.invocation_id != request.request_id:
+            raise ValueError("general evaluation changed request identity")
+        if outcome.result.provenance.candidate_sha256 != request.candidate_hash:
+            raise ValueError("general provenance changed candidate identity")
+        if outcome.decision.get("selection_eligible") is not True:
+            raise ValueError("general result is not eligible for development decision")
+        projected = project_result_cb(request, outcome)
+        if not isinstance(projected, EvaluationResult):
+            raise ValueError("general result projection is not a C6 EvaluationResult")
+        general_refs = [ref.to_dict() for ref in outcome.result.output_artifact_refs]
+        projected_refs = [ref.to_dict() for ref in projected.artifacts]
+        if canonical_normalized_bytes(general_refs) != canonical_normalized_bytes(
+            projected_refs
+        ):
+            raise ValueError("general and projected result artifacts differ")
+        result_mapping = outcome.result.to_dict()
+        decision_objective_id = result_mapping["decision_objective_id"]
+        objectives = cast(list[dict[str, JSONValue]], result_mapping["objective_vector"])
+        primary = next(
+            (
+                item
+                for item in objectives
+                if item["objective_id"] == decision_objective_id
+            ),
+            None,
+        )
+        if primary is None or (
+            primary["value"] != projected.primary_metric.value
+            or primary["direction"] != projected.primary_metric.direction
+        ):
+            raise ValueError("general and projected decision objectives differ")
+        holder["outcome"] = outcome
+        return projected
+
+    cycle = run_development_cycle(
+        proposal,
+        snapshot_mapping,
+        dispatch_cb,
+        evaluate,
+        decide_cb,
+    )
+    budget_after = query_count_cb()
+    if type(budget_after) is not int or budget_after != budget_before + 1:
+        raise ValueError("development cycle must consume exactly one query budget unit")
+    outcome = holder.get("outcome")
+    if not isinstance(outcome, ControlPathOutcome):
+        raise ValueError("development cycle did not retain the general outcome")
+    snapshot = cycle.snapshot.to_dict()
+    capability_grant_id = snapshot["capability_grant_id"]
+    if capability_grant_id != cycle.request.capability_grant_id:
+        raise ValueError("snapshot and request capability identities differ")
+    evidence = next(
+        (
+            ref
+            for ref in cycle.node.evidence_refs
+            if ref.get("result_id") == cycle.result.result_id
+        ),
+        None,
+    )
+    if evidence is None:
+        raise ValueError("product decision lost its result evidence")
+    report_mapping: dict[str, JSONValue] = {
+        "node_id": cycle.node.id,
+        "attempt_id": cycle.request.attempt_id,
+        "request_id": cycle.request.request_id,
+        "result_id": cycle.result.result_id,
+        "general_result_id": outcome.result.result_id,
+        "general_result_sha256": outcome.result.sha256,
+        "runner_receipt_sha256": outcome.receipt.sha256,
+        "provenance_sha256": outcome.result.provenance.sha256,
+        "general_transcript_sha256": outcome.transcript_sha256,
+        "evidence_id": cast(str, evidence["evidence_id"]),
+        "capability_grant_id": cast(str, capability_grant_id),
+        "budget_query_count_before": budget_before,
+        "budget_query_count_after": budget_after,
+        "code_ref": cast(str | None, snapshot["branch"]),
+        "artifact_refs": [ref.to_dict() for ref in cycle.result.artifacts],
+    }
+    report_sha256 = hashlib.sha256(
+        canonical_normalized_bytes(report_mapping)
+    ).hexdigest()
+    return ProductIntegrationTrace(
+        cycle=cycle,
+        general=outcome,
+        budget_query_count_before=budget_before,
+        budget_query_count_after=budget_after,
+        report=cast(Mapping[str, FrozenJSON], deep_freeze(report_mapping)),
+        report_sha256=report_sha256,
+    )
+
+
 __all__ = [
-    "DevelopmentCycleTrace", "PromptSnapshot", "freeze_prompt_snapshot",
-    "refinement_signature", "run_development_cycle",
+    "DevelopmentCycleTrace", "ProductIntegrationTrace", "PromptSnapshot",
+    "freeze_prompt_snapshot", "refinement_signature", "run_development_cycle",
+    "run_product_integration_cycle",
 ]
