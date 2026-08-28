@@ -356,8 +356,8 @@ def test_load_tree_uses_strict_json_decode_and_typed_schema_errors(
     duplicate = tmp_path / "duplicate.json"
     duplicate.write_text(
         canonical.replace(
-            '"run_id":"run.qualification"',
-            '"run_id":"run.qualification","run_id":"run.shadow"',
+            '"run_id":"run.fixture"',
+            '"run_id":"run.fixture","run_id":"run.shadow"',
             1,
         ),
         encoding="utf-8",

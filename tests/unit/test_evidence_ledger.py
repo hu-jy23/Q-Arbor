@@ -13,7 +13,7 @@ from q_arbor.ledger import EvidenceLedger
 
 
 CONTRACT_HASH = "a" * 64
-RUN_ID = "run.ledger.qualification"
+RUN_ID = "run.ledger.fixture"
 
 
 def _event(event_type: str, **overrides: Any) -> dict[str, Any]:

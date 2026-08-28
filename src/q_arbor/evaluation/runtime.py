@@ -96,7 +96,7 @@ def _canonicalize_requested_metrics(
 
 
 class EvaluationRequest(_ImmutableJSON):
-    """Exact frozen C6 EvaluationRequest bound to a candidate receipt."""
+    """Exact frozen EvaluationRequest bound to a candidate receipt."""
 
     @property
     def request_id(self) -> str:
@@ -311,14 +311,14 @@ def _validate_runtime_config(
 ) -> tuple[dict[str, JSONValue], FoldPolicy]:
     normalized = normalize_mapping(mapping)
     if set(normalized) != _CONFIG_KEYS or normalized["schema_version"] != "1.0":
-        raise EvaluationSchemaError("runtime config fields do not match C9")
+        raise EvaluationSchemaError("runtime config fields do not match the interface schema")
     plugin_config = normalized["plugin_config"]
     policy = normalized["policy"]
     if not isinstance(plugin_config, dict) or not isinstance(policy, dict):
         raise EvaluationSchemaError("runtime config objects are required")
     _scan_config_keys(cast(JSONValue, plugin_config))
     if set(policy) != _POLICY_KEYS:
-        raise EvaluationSchemaError("runtime policy fields do not match C9")
+        raise EvaluationSchemaError("runtime policy fields do not match the interface schema")
     required_checks = policy["required_check_names"]
     allowed_artifacts = policy["allowed_artifacts"]
     fold_policy_mapping = policy["fold_policy"]
@@ -342,7 +342,7 @@ def _validate_runtime_config(
     pairs: list[tuple[str, str]] = []
     for item in allowed_artifacts:
         if not isinstance(item, dict) or set(item) != {"kind", "media_type"}:
-            raise EvaluationSchemaError("allowed artifact entry fields do not match C9")
+            raise EvaluationSchemaError("allowed artifact entry fields do not match the interface schema")
         kind = require_reason_code(item["kind"], "allowed artifact kind")
         media_type = require_media_type(
             item["media_type"], "allowed artifact media type"
@@ -455,7 +455,7 @@ class VerifiedRuntimeLock(_ImmutableJSON):
     def verify(self) -> None:
         try:
             # The final config identity check is the verification boundary.
-            # C5 G02/G05 and C6 J04 require all bytes/policy to be closed first.
+            # All runtime bytes and policy must be closed before authorization.
             self._resolver.verify(self.evaluator_ref)
             current = self._resolver.read_bytes(self.config_ref)
         except Exception as exc:
@@ -867,7 +867,7 @@ class ContentAddressedArtifactStore:
             raise EvaluationSchemaError("issued artifact must be an ArtifactRef")
         if not isinstance(runtime_lock, VerifiedRuntimeLock):
             raise EvaluationSchemaError("issued artifact needs a verified runtime lock")
-        # C5 G02/G05, C6 J04, C9 §5: disk sidecars cannot attest their own policy.
+        # Disk sidecars cannot attest their own policy.
         runtime_lock.verify()
         expected_scope = canonical_normalized_bytes(
             _scope_record(request_id, runtime_lock)

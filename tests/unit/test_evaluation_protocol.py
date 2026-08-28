@@ -38,12 +38,9 @@ from q_arbor.evaluation import (
     validate_candidate_validation,
     validate_evaluation_request,
 )
-from q_arbor.plugins.formula_alpha import FormulaMockOutcome
-from q_arbor.plugins.synthetic import SyntheticSignalPlugin
+from tests.synthetic_plugin import SyntheticSignalPlugin
 from tests.evaluation_helpers import (
     artifact_ref_mapping,
-    formula_case,
-    hm1_case,
     invalid_synthetic_case,
     make_request,
     plugin_identity_mapping,
@@ -152,23 +149,10 @@ def test_frozen_public_function_parameter_names_and_keyword_boundaries() -> None
         )
 
 
-@pytest.mark.parametrize(
-    "case_factory",
-    [
-        synthetic_case,
-        hm1_case,
-        lambda path: formula_case(
-            path,
-            outcome=FormulaMockOutcome.BACKEND_UNAVAILABLE,
-        ),
-    ],
-    ids=["synthetic", "hm1", "formula-alpha"],
-)
-def test_one_controller_protocol_handles_all_three_adapters_without_branching(
+def test_controller_protocol_handles_a_task_adapter_without_branching(
     tmp_path: Path,
-    case_factory: Callable[[Path], Any],
 ) -> None:
-    case = case_factory(tmp_path / "case")
+    case = synthetic_case(tmp_path / "case")
 
     def controller(plugin: QuantTaskPlugin, case_value: Any) -> tuple[Any, Any]:
         validation = plugin.validate(case_value.candidate, case_value.contract)
@@ -1458,7 +1442,7 @@ def test_contract_task_kind_mismatch_is_integrity_error_before_validation(
     )
     mapping = contract.to_dict()
     mapping.pop("contract_hash")
-    mapping["task_kind"] = "formula_alpha"
+    mapping["task_kind"] = "different_task_kind"
     from q_arbor.contracts import freeze_contract
 
     wrong_contract = freeze_contract(mapping)

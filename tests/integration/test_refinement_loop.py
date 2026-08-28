@@ -21,16 +21,16 @@ from tests.hypothesis_helpers import canonical_json, node_draft_kwargs, scope_ma
 def _snapshot(
     case, request, scope, *, selected_insight_ids=(), evidence_hashes=(),
     failure_summary=None, user="refine:synthetic",
-    branch: str = "exec/node.qualification",
-    worktree: str = "worktrees/node.qualification",
+    branch: str = "exec/node.fixture",
+    worktree: str = "worktrees/node.fixture",
 ):
     system = "dispatch:development"
     snapshot = {
-        "schema_version": "1.0", "prompt_snapshot_id": "prompt.node.qualification",
+        "schema_version": "1.0", "prompt_snapshot_id": "prompt.node.fixture",
         "run_id": request.run_id, "phase": "dispatch", "cycle": 0,
         "attempt_id": request.attempt_id, "tree_revision": 0, "ledger_sequence": 1,
-        "contract_hash": request.contract_hash, "candidate_id": "candidate.qualification",
-        "family_id": "family.node.qualification", "scope": scope,
+        "contract_hash": request.contract_hash, "candidate_id": "candidate.fixture",
+        "family_id": "family.node.fixture", "scope": scope,
         "base_commit": None, "branch": branch, "worktree": worktree,
         "system_template_id": "q-arbor.synthetic.v1",
         "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
@@ -109,28 +109,28 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
                                  principal="executor", token=token)
         draft = node_draft_kwargs(request.node_id, parent_id="root", proposal_order=1, scope=scope)
         draft.update(prompt_snapshot_sha256=snap.sha256,
-                     candidate_id="candidate.qualification",
+                     candidate_id="candidate.fixture",
                      candidate_artifact=request.candidate.to_dict())
         proposed = tree.apply(TreeMutation.add_node(NodeDraft(**draft)),
                               expected_revision=tree.load().revision,
-                              idempotency_key="propose.qualification")
+                              idempotency_key="propose.fixture")
         event(proposed.get_node(request.node_id).created_event_id, "hypothesis.proposed",
               "coordinator", {"request_id": request.request_id, "result_id": result_id,
                                "artifact_ref": request.candidate.to_dict()})
         tree.apply(TreeMutation.update_node(
             request.node_id, {"status": "running", "lifecycle": "running",
                               "attempt_ids": [request.attempt_id]}),
-            expected_revision=tree.load().revision, idempotency_key="dispatch.qualification")
-        event("event.dispatch.qualification", "attempt.dispatched", "coordinator",
+            expected_revision=tree.load().revision, idempotency_key="dispatch.fixture")
+        event("event.dispatch.fixture", "attempt.dispatched", "coordinator",
               {"request_id": request.request_id, "result_id": result_id,
                "prompt_snapshot_sha256": snap.sha256})
         return request
 
     def evaluate(req):
-        event("event.request.qualification", "evaluation.requested", "coordinator",
+        event("event.request.fixture", "evaluation.requested", "coordinator",
               {"request_id": req.request_id, "result_id": result_id})
         value = case.plugin.evaluate(case.receipt, case.split)
-        event("event.complete.qualification", "evaluation.completed", "evaluator",
+        event("event.complete.fixture", "evaluation.completed", "evaluator",
               {"request_id": req.request_id, "result_id": value.result_id,
                "artifact_refs": [ref.to_dict() for ref in value.artifacts]})
         return value
@@ -138,19 +138,19 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
     def decide(req, value):
         node = tree.load().get_node(req.node_id)
         evidence = {
-            "evidence_id": "evidence.qualification", "attempt_id": req.attempt_id,
+            "evidence_id": "evidence.fixture", "attempt_id": req.attempt_id,
             "result_id": value.result_id, "split_role": "development", "level": "observed",
             "claim": "development result supports candidate", "conditions": ["development"],
             "status": "valid", "artifact_refs": [ref.to_dict() for ref in value.artifacts],
         }
         validate_evaluation_evidence(value, request=req, node=node, evidence=evidence)
-        event("event.decision.qualification", "decision.recorded", "coordinator",
+        event("event.decision.fixture", "decision.recorded", "coordinator",
               {"request_id": req.request_id, "result_id": value.result_id,
                "evidence_id": evidence["evidence_id"]})
         return tree.apply(TreeMutation.update_node(
             req.node_id, {"status": "done", "lifecycle": "done",
                           "admissibility": "admissible", "evidence_refs": [evidence]}),
-            expected_revision=tree.load().revision, idempotency_key="decide.qualification").get_node(req.node_id)
+            expected_revision=tree.load().revision, idempotency_key="decide.fixture").get_node(req.node_id)
 
     trace = run_development_cycle(proposal, snapshot, dispatch, evaluate, decide)
     assert consumed and consumed[0].sha256 == trace.snapshot.sha256
@@ -181,7 +181,7 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
         "category": "constraint_violation",
         "summary": "ancestor failed under development evaluation",
     }
-    assert consumed_snapshot["family_id"] == "family.node.qualification"
+    assert consumed_snapshot["family_id"] == "family.node.fixture"
     assert consumed_snapshot["scope"] is not None
     assert descriptor["split_role"] == "development"
     assert descriptor["split_manifest_hash"] == request.split_manifest_hash
@@ -196,8 +196,8 @@ def test_development_cycle_consumes_snapshot_and_keeps_identity(tmp_path: Path) 
     assert trace.node.id == request.node_id and trace.request.attempt_id in trace.node.attempt_ids
     assert trace.result.request_id == request.request_id and trace.result.result_id == result_id
     assert trace.node.evidence_refs[0]["result_id"] == trace.result.result_id
-    assert consumed_snapshot["branch"] == "exec/node.qualification"
-    assert consumed_snapshot["worktree"] == "worktrees/node.qualification"
+    assert consumed_snapshot["branch"] == "exec/node.fixture"
+    assert consumed_snapshot["worktree"] == "worktrees/node.fixture"
     assert report["node_id"] == request.node_id
     assert report["code_ref"] == consumed_snapshot["branch"]
     assert report["result_id"] == trace.result.result_id

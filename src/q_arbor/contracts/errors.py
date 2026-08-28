@@ -12,7 +12,7 @@ class ContractDecodeError(ContractError):
 
 
 class ContractSchemaError(ContractError):
-    """The normalized document does not satisfy the frozen C6 schema."""
+    """The normalized document does not satisfy the interface schema."""
 
 
 class ContractInvariantError(ContractError):

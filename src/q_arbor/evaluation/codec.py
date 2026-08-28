@@ -1,4 +1,4 @@
-"""Strict JSON, frozen-C6 schema, and atomic persistence helpers for C9."""
+"""Strict JSON, interface-schema, and atomic persistence helpers."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ FrozenJSON: TypeAlias = (
 )
 
 SCHEMA_SHA256: Final = (
-    "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+    "adcfe46321a6908cf1fc20a5dcfc9e363a1aeddca4e7f4fd93f0c2e6a9fd56c4"
 )
 IDENTIFIER_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
 SHA256_RE: Final = re.compile(r"[a-f0-9]{64}")
@@ -210,23 +210,23 @@ def _schema_mapping() -> dict[str, Any]:
     try:
         raw = (
             resources.files("q_arbor.spec")
-            .joinpath("C6_INTERFACE_SCHEMA.json")
+            .joinpath("INTERFACE_SCHEMA.json")
             .read_bytes()
         )
     except (OSError, ModuleNotFoundError) as exc:
-        raise EvaluationSchemaError("frozen C6 schema is unavailable") from exc
+        raise EvaluationSchemaError("interface schema is unavailable") from exc
     if sha256(raw).hexdigest() != SCHEMA_SHA256:
-        raise EvaluationSchemaError("frozen C6 schema hash does not match")
+        raise EvaluationSchemaError("interface schema hash does not match")
     try:
         decoded = decode_json_bytes(raw)
         if not isinstance(decoded, dict):
-            raise EvaluationSchemaError("frozen C6 schema is not an object")
+            raise EvaluationSchemaError("interface schema is not an object")
         Draft202012Validator.check_schema(decoded)
         return decoded
     except EvaluationSchemaError:
         raise
     except (EvaluationDecodeError, SchemaError) as exc:
-        raise EvaluationSchemaError("frozen C6 schema is invalid") from exc
+        raise EvaluationSchemaError("interface schema is invalid") from exc
 
 
 @lru_cache(maxsize=16)
@@ -234,7 +234,7 @@ def _definition_validator(name: str) -> Draft202012Validator:
     schema = _schema_mapping()
     definitions = schema.get("$defs")
     if not isinstance(definitions, dict) or name not in definitions:
-        raise EvaluationSchemaError("requested frozen C6 definition is unavailable")
+        raise EvaluationSchemaError("requested interface definition is unavailable")
     wrapper = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$ref": f"#/$defs/{name}",
@@ -283,7 +283,7 @@ def _run_schema_validation(
     except EvaluationSchemaError:
         raise
     except Exception as exc:
-        raise EvaluationSchemaError("unable to evaluate frozen C6 schema") from exc
+        raise EvaluationSchemaError("unable to evaluate interface schema") from exc
     if errors:
         error = errors[0]
         raise EvaluationSchemaError(
@@ -294,7 +294,7 @@ def _run_schema_validation(
 
 
 def validate_definition(mapping: Mapping[str, JSONValue], name: str) -> None:
-    """Validate one value against a hash-checked C6 ``$defs`` definition."""
+    """Validate one value against a hash-checked ``$defs`` definition."""
 
     _run_schema_validation(_definition_validator(name), mapping, label=name)
 
@@ -302,7 +302,7 @@ def validate_definition(mapping: Mapping[str, JSONValue], name: str) -> None:
 def validate_discriminator(
     mapping: Mapping[str, JSONValue], artifact_type: str
 ) -> None:
-    """Validate through the complete frozen C6 artifact discriminator."""
+    """Validate through the complete interface artifact discriminator."""
 
     envelope: dict[str, JSONValue] = {
         "artifact_type": artifact_type,
@@ -346,11 +346,11 @@ def require_media_type(value: Any, field: str) -> str:
 
 
 def require_literal_path(value: Any, field: str) -> str:
-    """Apply the C7 literal path and Git/filesystem byte limits."""
+    """Apply literal path and Git/filesystem byte limits."""
 
     if not isinstance(value, str) or not value:
         raise EvaluationSchemaError(f"{field} must be a relative path")
-    # These are the frozen C6 RelativePath shape failures.
+    # These are interface RelativePath shape failures.
     if value.startswith("/"):
         raise EvaluationSchemaError(f"{field} is not repository-relative")
     if "\\" in value or _WINDOWS_DRIVE_RE.match(value):
@@ -359,7 +359,7 @@ def require_literal_path(value: Any, field: str) -> str:
     if "//" in value or any(segment in {".", ".."} for segment in segments):
         raise EvaluationSchemaError(f"{field} fails the relative-path schema")
 
-    # C6-valid paths still cross the stricter C7/C9 canonical path invariant.
+    # Schema-valid paths still cross the stricter canonical path invariant.
     if value != value.strip() or value.endswith("/"):
         raise EvaluationInvariantError(f"{field} is not a canonical path")
     if any(ord(character) < 32 or ord(character) == 127 for character in value):

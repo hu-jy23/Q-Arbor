@@ -94,7 +94,7 @@ def _failure_insight_updates(
         "incomparable": "incomparable",
     }.get(failure_type, "invalid")
     if validity == "invalidated":
-        insight["invalidation_reason"] = "qualification fixture"
+        insight["invalidation_reason"] = "fixture fixture"
     return {
         "status": status,
         "lifecycle": "done",

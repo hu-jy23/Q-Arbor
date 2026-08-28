@@ -81,14 +81,14 @@ def test_refinement_product_path_calls_general_surface_and_retains_chains(
             "adapter_id": "adapter.synthetic-bridge/v1",
             "adapter_version": "1.0",
             "adapter_code_sha256": H,
-            "candidate_codec_id": "codec.candidate/c6-compat-v1",
-            "invocation_codec_id": "codec.invocation/c6-compat-v1",
-            "result_codec_id": "codec.result/c6-compat-v1",
+            "candidate_codec_id": "codec.candidate/interface-compat-v1",
+            "invocation_codec_id": "codec.invocation/interface-compat-v1",
+            "result_codec_id": "codec.result/interface-compat-v1",
             "runner_id": "runner.synthetic-bridge/v1",
             "required_output_descriptors": ["evaluation.artifacts"],
             "objective_descriptors": ["objective.primary"],
             "diagnostic_descriptors": ["diagnostic.open"],
-            "failure_mapping_id": "failure.c6-compat/v1",
+            "failure_mapping_id": "failure.interface-compat/v1",
             "provenance_requirements": ["contract", "evaluator", "split"],
         }
     )

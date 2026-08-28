@@ -1,4 +1,4 @@
-"""Strict JSON, frozen-schema, and canonical hashing helpers for C8."""
+"""Strict JSON, interface-schema, and canonical hashing helpers."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from .errors import HypothesisDecodeError, HypothesisSchemaError
 JSONScalar: TypeAlias = type(None) | bool | int | float | str
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
-_SCHEMA_NAME: Final = "C6_INTERFACE_SCHEMA.json"
+_SCHEMA_NAME: Final = "INTERFACE_SCHEMA.json"
 _SCHEMA_SHA256: Final = (
-    "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+    "adcfe46321a6908cf1fc20a5dcfc9e363a1aeddca4e7f4fd93f0c2e6a9fd56c4"
 )
 
 
@@ -179,24 +179,24 @@ def canonical_mapping_hash(
 
 @lru_cache(maxsize=1)
 def schema_validator() -> Draft202012Validator:
-    """Load and hash-check the frozen C6 discriminator schema."""
+    """Load and hash-check the interface discriminator schema."""
 
     try:
         raw = resources.files("q_arbor.spec").joinpath(_SCHEMA_NAME).read_bytes()
     except (OSError, ModuleNotFoundError) as exc:
-        raise HypothesisSchemaError("frozen C6 schema is unavailable") from exc
+        raise HypothesisSchemaError("interface schema is unavailable") from exc
     if sha256(raw).hexdigest() != _SCHEMA_SHA256:
-        raise HypothesisSchemaError("frozen C6 schema hash does not match")
+        raise HypothesisSchemaError("interface schema hash does not match")
     try:
         decoded = decode_json_bytes(raw)
         if not isinstance(decoded, dict):
-            raise HypothesisSchemaError("frozen C6 schema is not a JSON object")
+            raise HypothesisSchemaError("interface schema is not a JSON object")
         Draft202012Validator.check_schema(decoded)
         return Draft202012Validator(decoded, format_checker=FormatChecker())
     except HypothesisSchemaError:
         raise
     except (HypothesisDecodeError, SchemaError) as exc:
-        raise HypothesisSchemaError("frozen C6 schema is invalid") from exc
+        raise HypothesisSchemaError("interface schema is invalid") from exc
 
 
 def _display_schema_path(parts: Sequence[Any]) -> str:
@@ -217,7 +217,7 @@ def _display_schema_path(parts: Sequence[Any]) -> str:
 def validate_discriminator(
     mapping: Mapping[str, JSONValue], artifact_type: str
 ) -> None:
-    """Validate a normalized payload through the complete C6 discriminator."""
+    """Validate a normalized payload through the complete discriminator."""
 
     envelope = {"artifact_type": artifact_type, "payload": mapping}
     try:
@@ -232,7 +232,7 @@ def validate_discriminator(
     except HypothesisSchemaError:
         raise
     except Exception as exc:
-        raise HypothesisSchemaError("unable to evaluate the frozen C6 schema") from exc
+        raise HypothesisSchemaError("unable to evaluate the interface schema") from exc
     if error is not None:
         location = _display_schema_path(list(error.absolute_path))
         rule = str(error.validator or "schema")

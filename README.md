@@ -2,7 +2,7 @@
 
 Q-Arbor is a task-neutral research harness for stateful, bounded and auditable quantitative experimentation. It adapts Arbor's persistent Coordinator/Executor workflow to quantitative tasks through open adapter, runner, evaluation-stage, result and provenance interfaces.
 
-Status: **v0.1 evaluated research prototype**.
+Status: **v0.1 public release**.
 
 ## Core capabilities
 
@@ -46,12 +46,14 @@ See [Architecture](docs/ARCHITECTURE.md) for the component and lifecycle map.
 
 ## Evaluation
 
-Q-Arbor was evaluated through [QArborBench](https://github.com/hu-jy23/QArborBench), a 12-contract benchmark suite spanning five representative task families and four evidence regimes. QArborBench-v0.1 executed nine cells and retained three registered cells as explicitly deferred.
+Q-Arbor was evaluated through [QArborBench](https://github.com/hu-jy23/QArborBench), an eight-task benchmark spanning five representative quantitative task families and four primary evidence regimes. Seven cells provide complete Native, Flat Agent and Q-Arbor comparisons; one preserves a typed Q-Arbor no-result.
+
+The release covers Bike, M5, Hull, JPX, Recruit, Walmart, Optiver and Web Traffic.
 
 Frozen primary results:
 
-- Q-Arbor vs Native: 6 wins, 2 losses, 1 no-result.
-- Q-Arbor vs Flat Agent: 4 wins, 4 losses, 1 no-result.
+- Q-Arbor vs Native: 5 wins, 2 losses, 1 no-result.
+- Q-Arbor vs Flat Agent: 4 wins, 3 losses, 1 no-result.
 - Public validation, Q-Arbor vs Flat Agent: 3 wins in 4 cells.
 
 These are task-dependent results from one formal run per arm. They do not establish universal superiority, statistical score stability, a pure same-model component ablation, trading profitability or exact provider cost.

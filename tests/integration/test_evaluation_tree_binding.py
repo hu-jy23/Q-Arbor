@@ -19,7 +19,7 @@ from q_arbor.evaluation import (
     validate_evaluation_evidence,
 )
 from q_arbor.hypotheses import QuantHypothesisNode, freeze_node
-from q_arbor.plugins.synthetic import SyntheticSignalPlugin
+from tests.synthetic_plugin import SyntheticSignalPlugin
 from tests.evaluation_helpers import (
     bind_validation,
     make_request,
@@ -37,7 +37,7 @@ def _running_node(case: Any, **updates: Any) -> QuantHypothesisNode:
         lifecycle="running",
         admissibility="unevaluated",
         score=None,
-        candidate_id="candidate.qualification",
+        candidate_id="candidate.fixture",
         candidate_artifact=case.request.candidate.to_dict(),
         attempt_ids=[case.request.attempt_id],
         evidence_refs=[],
@@ -59,7 +59,7 @@ def _scored_node(
 ) -> QuantHypothesisNode:
     mapping = copy.deepcopy(valid_tree_draft_mapping()["nodes"][1])
     mapping["id"] = case.request.node_id
-    mapping["candidate_id"] = "candidate.qualification"
+    mapping["candidate_id"] = "candidate.fixture"
     mapping["candidate_artifact"] = (
         case.request.candidate.to_dict() if candidate_artifact_present else None
     )
@@ -79,7 +79,7 @@ def _scored_node(
 
 def _evidence(case: Any, **updates: Any) -> dict[str, Any]:
     mapping = {
-        "evidence_id": "evidence.qualification",
+        "evidence_id": "evidence.fixture",
         "attempt_id": case.request.attempt_id,
         "result_id": case.result.result_id,
         "split_role": case.result.split_role,
@@ -110,7 +110,7 @@ def _alternate_valid_request(
         contract_mapping = case.contract.to_dict()
         if mismatch == "contract_hash":
             contract_mapping["objective"]["research_question"] += (
-                " Qualification identity variant."
+                " Fixture identity variant."
             )
         elif mismatch == "plugin_code_sha256":
             identity_mapping = identity.to_dict()
@@ -411,7 +411,7 @@ def test_no_non_success_result_can_become_valid_observed_c8_evidence(
     case = synthetic_case(tmp_path / "case")
     mapping = make_access_denied_result(
         binding=case.binding,
-        reason_code=ReasonCode.parse("qualification.non_success"),
+        reason_code=ReasonCode.parse("fixture.non_success"),
     ).to_dict()
     mapping["status"] = status
     mapping["failure"]["failure_type"] = failure_type

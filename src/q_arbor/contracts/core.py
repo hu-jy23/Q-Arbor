@@ -35,9 +35,9 @@ FrozenJSON: TypeAlias = (
     JSONScalar | tuple["FrozenJSON", ...] | Mapping[str, "FrozenJSON"]
 )
 
-_SCHEMA_NAME: Final = "C6_INTERFACE_SCHEMA.json"
+_SCHEMA_NAME: Final = "INTERFACE_SCHEMA.json"
 _SCHEMA_SHA256: Final = (
-    "89d39ebb0c9d8c06839f6d72951ccc8abd9ad36d753de79a06fa1890d6e420a0"
+    "adcfe46321a6908cf1fc20a5dcfc9e363a1aeddca4e7f4fd93f0c2e6a9fd56c4"
 )
 _HASH_PLACEHOLDER: Final = "0" * 64
 _SPLIT_ORDER: Final = ("development", "gate", "final")
@@ -227,7 +227,7 @@ def _schema_validator() -> Draft202012Validator:
     except (OSError, ModuleNotFoundError) as exc:
         raise ContractSchemaError("frozen contract schema is unavailable") from exc
     if sha256(raw).hexdigest() != _SCHEMA_SHA256:
-        raise ContractSchemaError("frozen contract schema hash does not match C6")
+        raise ContractSchemaError("contract schema hash does not match the interface schema")
     try:
         decoded = _decode_json_bytes(raw)
         if not isinstance(decoded, dict):
@@ -256,7 +256,7 @@ def _display_schema_path(parts: Sequence[Any]) -> str:
 
 
 def _validate_schema(mapping: Mapping[str, JSONValue]) -> None:
-    # C6 C01: exercise the frozen artifact discriminator, not a copied subschema.
+    # Exercise the full artifact discriminator, not a copied subschema.
     envelope = {"artifact_type": "quant_research_contract", "payload": mapping}
     try:
         errors = sorted(
@@ -440,7 +440,7 @@ def _segment_patterns_overlap(left: str, right: str) -> bool:
 def _glob_patterns_overlap(left: str, right: str) -> bool:
     # Arbor applies fnmatch to the complete repository-relative path, where '*'
     # can consume '/'.  Prefix/suffix compatibility is a conservative language-
-    # intersection check for the same seam (C6 C01/J03).
+    # Intersection check for the same schema seam.
     return _segment_patterns_overlap(os.path.normcase(left), os.path.normcase(right))
 
 
@@ -541,7 +541,7 @@ def _looks_like_locator(value: str, *, reject_any_slash: bool = False) -> bool:
 
 
 def _validate_opaque_data_identifier(identifier: str, field: str) -> None:
-    # C6 J06: split identities may select a manifest hash, never locate raw data.
+    # Split identities may select a manifest hash, never locate raw data.
     if _looks_like_locator(identifier, reject_any_slash=True):
         raise ContractInvariantError(
             f"{field} must be an opaque non-locating identifier"
@@ -568,8 +568,8 @@ def _validate_constraint_threshold(constraint: Mapping[str, JSONValue]) -> None:
                 "membership constraint threshold members must be JSON scalars"
             )
         if isinstance(value, str) and _looks_like_locator(value, reject_any_slash=True):
-            # ConstraintSpec.threshold is C6 C01's sole schema-open contract seam;
-            # C10 owns resolving all filesystem/URI split locators.
+            # ConstraintSpec.threshold is the sole schema-open contract seam;
+            # the runtime resolves all filesystem and URI split locators.
             raise ContractInvariantError(
                 "constraint threshold cannot contain a filesystem or URI locator"
             )
@@ -623,7 +623,7 @@ def _scan_secret_keys(value: JSONValue, path: str = "$") -> None:
 
 
 def _validate_invariants(contract: Mapping[str, JSONValue]) -> None:
-    # C5 G01-G05 / C6 C01: reject inconsistent task facts before any Arbor call.
+    # Reject inconsistent task facts before any Arbor call.
     _validate_lexical_invariants(contract)
     _validate_time_invariants(contract)
     _validate_path_invariants(contract)

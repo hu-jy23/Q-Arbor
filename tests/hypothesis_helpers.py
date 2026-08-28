@@ -43,7 +43,7 @@ def arbor_v3_mapping() -> dict[str, Any]:
 
 
 def normalized_copy(value: Any) -> Any:
-    """Independent normalization oracle for C6 canonical JSON."""
+    """Independent normalization oracle for canonical interface JSON."""
 
     if value is None or isinstance(value, (bool, int)):
         return value

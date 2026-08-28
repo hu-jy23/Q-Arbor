@@ -184,7 +184,7 @@ def render_research_report(
                 anchors[evidence_id] = _evidence_anchor(evidence_id, used)
 
     hero = [
-        f'<header class="hero {h(status)}"><p>Q-Arbor prototype</p>',
+        f'<header class="hero {h(status)}"><p>Q-Arbor</p>',
         "<h1>Research report</h1>",
         f'<span class="badge {h(status)}">integrity_status={h(status)}</span>',
         f'<span class="badge">claim_scope={h(raw.get("claim_scope"))}</span>',
@@ -197,7 +197,7 @@ def render_research_report(
         if isinstance(counts, Mapping) and key in counts:
             summary.append(_def_link(key.replace("_", " "), counts[key], "evidence-tree-source"))
     summary.extend([_def_link("Audited missing/issues", len(audit.missing_artifacts), "audit-artifacts"), _def_link("Declared missing artifacts", raw.get("missing_artifacts"), "audit-artifacts"), "</dl></section>"])
-    sections = ["<main>", *hero, '<div class="grid">', *summary, _failure_section(nodes, anchors), _cost_section(nodes), "</div>", _tree_section(nodes, anchors, raw), _split_section(nodes, anchors), _qualification_section(), _artifact_section(raw, audit), "<p class=\"muted\">Caveat: synthetic/development-only; this report does not establish performance conclusions. The sealed final state has not been opened.</p>", "</main>"]
+    sections = ["<main>", *hero, '<div class="grid">', *summary, _failure_section(nodes, anchors), _cost_section(nodes), "</div>", _tree_section(nodes, anchors, raw), _split_section(nodes, anchors), _artifact_section(raw, audit), "<p class=\"muted\">Caveat: deterministic fixture only; this report does not establish performance conclusions. The sealed final state has not been opened.</p>", "</main>"]
     return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Q-Arbor research report</title><style>" + _REPORT_STYLE + "</style></head><body>" + "".join(sections) + "</body></html>\n"
 
 
@@ -297,11 +297,6 @@ def _split_section(nodes: list[Mapping[str, Any]], anchors: Mapping[str, str]) -
             rows.append(f"<tr><td>{h(node.get('id'))}</td><td>{h(item.get('split_role'))}</td><td>{_link(item.get('evidence_id'), anchors)}</td></tr>")
     body = "".join(rows) or '<tr><td colspan="3">unavailable</td></tr>'
     return f'<section class="card"><h2>Split audit</h2><div class="table-wrap"><table><thead><tr><th>Node</th><th>Split role</th><th>Evidence</th></tr></thead><tbody>{body}</tbody></table></div></section>'
-
-
-def _qualification_section() -> str:
-    rows = "".join(f"<tr><td>C0{i}</td><td>unavailable</td><td>unavailable — no package evidence</td></tr>" for i in range(1, 7))
-    return f'<section class="card"><h2>C01–C06 naming qualification</h2><div class="table-wrap"><table><thead><tr><th>Component</th><th>Status</th><th>Evidence</th></tr></thead><tbody>{rows}</tbody></table></div></section>'
 
 
 def _artifact_section(raw: Mapping[str, Any], audit: ResearchPackageAudit) -> str:

@@ -24,17 +24,7 @@ from q_arbor.evaluation import (
     VerifiedRuntimeLock,
     freeze_evaluation_request,
 )
-from q_arbor.plugins.formula_alpha import (
-    FormulaAlphaPlugin,
-    FormulaMockOutcome,
-    PublicFormulaSchema,
-)
-from q_arbor.plugins.formula_alpha.testing import (
-    make_formula_alpha_mock_development_split,
-)
-from q_arbor.plugins.hm1 import HM1EngineOutput, HM1FuturesPlugin
-from q_arbor.plugins.hm1.testing import make_hm1_mock_development_split
-from q_arbor.plugins.synthetic import (
+from tests.synthetic_plugin import (
     SyntheticSignalPlugin,
     make_synthetic_development_split,
     synthetic_contract_draft,
@@ -86,38 +76,6 @@ def synthetic_identity() -> PluginIdentity:
     return PluginIdentity.from_mapping(plugin_identity_mapping())
 
 
-def hm1_identity() -> PluginIdentity:
-    return PluginIdentity.from_mapping(
-        plugin_identity_mapping(
-            name="hm1.futures",
-            artifact_type="q-arbor.hm1-strategy-python.v1",
-            code_sha256=HASH_B,
-        )
-    )
-
-
-def formula_identity() -> PluginIdentity:
-    return PluginIdentity.from_mapping(
-        plugin_identity_mapping(
-            name="formula.alpha",
-            artifact_type="q-arbor.formula-alpha.v1",
-            code_sha256=HASH_C,
-        )
-    )
-
-
-def public_formula_schema() -> PublicFormulaSchema:
-    return PublicFormulaSchema.from_mapping(
-        {
-            "schema_version": "1.0",
-            "fields": [
-                {"name": "close", "dtype": "float64"},
-                {"name": "volume", "dtype": "float64"},
-            ],
-        }
-    )
-
-
 def synthetic_contract(identity: PluginIdentity | None = None) -> QuantResearchContract:
     identity = identity or synthetic_identity()
     return freeze_contract(
@@ -126,97 +84,6 @@ def synthetic_contract(identity: PluginIdentity | None = None) -> QuantResearchC
             baseline_ref="baseline/main@0123456789abcdef",
         )
     )
-
-
-def _adapter_contract_draft(
-    identity: PluginIdentity,
-    *,
-    task_kind: str,
-    required_output: str,
-) -> dict[str, Any]:
-    draft = synthetic_contract_draft(
-        plugin_identity=synthetic_identity(),
-        baseline_ref="baseline/main@0123456789abcdef",
-    )
-    draft["contract_id"] = f"qualification.{task_kind}.v1"
-    draft["task_id"] = f"qualification.{task_kind}.001"
-    draft["task_kind"] = task_kind
-    draft["objective"]["research_question"] = (
-        f"Can the synthetic-only {task_kind} interface produce a typed terminal result?"
-    )
-    draft["objective"]["candidate_artifact_type"] = identity.artifact_type
-    draft["plugin"] = identity.to_dict()
-    surface = required_output.split("/", maxsplit=1)[0]
-    draft["editable_surface"] = [f"{surface}/**"]
-    draft["required_outputs"] = [required_output]
-    return draft
-
-
-def hm1_contract(identity: PluginIdentity | None = None) -> QuantResearchContract:
-    identity = identity or hm1_identity()
-    draft = _adapter_contract_draft(
-        identity,
-        task_kind="futures_strategy",
-        required_output="strategies/candidate.py",
-    )
-    draft["metrics"] = {
-        "primary": {
-            "name": "portfolio_daily_sharpe",
-            "direction": "maximize",
-            "unit": "ratio",
-            "aggregation": "aggregate_only",
-        },
-        "hard_constraints": [],
-        "diagnostics": [
-            {
-                "name": name,
-                "direction": direction,
-                "unit": unit,
-                "aggregation": "aggregate_only",
-            }
-            for name, direction, unit in (
-                ("annualized_return", "maximize", "fraction"),
-                ("max_drawdown", "minimize", "fraction"),
-                ("calmar", "maximize", "ratio"),
-                ("win_rate", "maximize", "fraction"),
-                ("trade_count", "minimize", "count"),
-                ("coverage_count", "maximize", "count"),
-                ("expected_coverage_count", "maximize", "count"),
-            )
-        ],
-        "admission_rule": "C9 HM1 results are incomparable until cost semantics exist",
-    }
-    draft["cost_model"] = {
-        "model_id": "hm1.cost.unavailable.v1",
-        "sha256": "437ffc85b60e22acdeb71ecd08472a1de9436fa3707964113e264ccb3301604c",
-        "components": [
-            {
-                "name": "transaction_cost",
-                "rule": "unavailable in C9 HM1 mock",
-            }
-        ],
-        "currency": "not_applicable",
-    }
-    return freeze_contract(draft)
-
-
-def formula_contract(
-    identity: PluginIdentity | None = None,
-    schema: PublicFormulaSchema | None = None,
-) -> QuantResearchContract:
-    identity = identity or formula_identity()
-    schema = schema or public_formula_schema()
-    draft = _adapter_contract_draft(
-        identity,
-        task_kind="formula_alpha",
-        required_output="formulas/candidate.json",
-    )
-    draft["data"]["schema_sha256"] = schema.sha256
-    draft["metrics"]["hard_constraints"] = []
-    draft["metrics"]["admission_rule"] = (
-        "No C9 formula result is admissible before a real backend exists"
-    )
-    return freeze_contract(draft)
 
 
 class FileArtifactResolver:
@@ -446,16 +313,16 @@ def evaluation_request_mapping(
     receipt: CandidateReceipt,
     *,
     split_role: str = "development",
-    request_id: str = "request.qualification.1",
-    node_id: str = "node.qualification",
-    attempt_id: str = "attempt.qualification.1",
+    request_id: str = "request.fixture.1",
+    node_id: str = "node.fixture",
+    attempt_id: str = "attempt.fixture.1",
 ) -> dict[str, Any]:
     contract_mapping = contract.to_dict()
     split = contract_mapping["data"]["splits"][split_role]
     metrics = contract_mapping["metrics"]
     return {
         "request_id": request_id,
-        "run_id": "run.qualification",
+        "run_id": "run.fixture",
         "node_id": node_id,
         "attempt_id": attempt_id,
         "idempotency_key": f"idempotency.{request_id}",
@@ -466,12 +333,12 @@ def evaluation_request_mapping(
         "plugin": receipt.plugin_identity.to_dict(),
         "split_role": split_role,
         "split_manifest_hash": split["manifest_sha256"],
-        "capability_grant_id": f"grant.{split_role}.qualification",
+        "capability_grant_id": f"grant.{split_role}.fixture",
         "requested_metrics": [
             metrics["primary"]["name"],
             *(item["name"] for item in metrics["diagnostics"]),
         ],
-        "created_event_id": "event.request.qualification",
+        "created_event_id": "event.request.fixture",
     }
 
 
@@ -484,9 +351,9 @@ def make_request(
         contract,
         receipt,
         split_role=updates.pop("split_role", "development"),
-        request_id=updates.pop("request_id", "request.qualification.1"),
-        node_id=updates.pop("node_id", "node.qualification"),
-        attempt_id=updates.pop("attempt_id", "attempt.qualification.1"),
+        request_id=updates.pop("request_id", "request.fixture.1"),
+        node_id=updates.pop("node_id", "node.fixture"),
+        attempt_id=updates.pop("attempt_id", "attempt.fixture.1"),
     )
     mapping.update(updates)
     return freeze_evaluation_request(
@@ -504,7 +371,7 @@ def make_binding(
     plugin_identity: PluginIdentity,
     runtime_lock: VerifiedRuntimeLock,
     artifact_resolver: Any,
-    result_id: str = "result.qualification.1",
+    result_id: str = "result.fixture.1",
     seed: int = 7,
 ) -> EvaluationBinding:
     return EvaluationBinding.create(
@@ -635,147 +502,6 @@ def invalid_synthetic_case(
         require_valid=False,
     )
     return plugin, identity, contract, candidate, receipt
-
-
-def hm1_engine_mapping(
-    status: str,
-    *,
-    coverage_count: int | None = None,
-    expected_coverage_count: int = 252,
-) -> dict[str, Any]:
-    complete = status == "complete"
-    return {
-        "schema_version": "1.0",
-        "status": status,
-        "portfolio_daily_sharpe": 1.25 if complete else None,
-        "annualized_return": 0.12 if complete else None,
-        "max_drawdown": 0.08 if complete else None,
-        "calmar": 1.5 if complete else None,
-        "win_rate": 0.55 if complete else None,
-        "trade_count": 42 if complete else None,
-        "coverage_count": (
-            expected_coverage_count
-            if complete and coverage_count is None
-            else coverage_count
-        ),
-        "expected_coverage_count": expected_coverage_count,
-        "cost_semantics": "unavailable",
-        "warning_codes": ["hm1.synthetic_fixture"],
-    }
-
-
-def hm1_case(
-    root: Path,
-    *,
-    engine_status: str = "complete",
-    coverage_count: int | None = None,
-    untrusted_failure_detail: str | None = None,
-) -> EvaluationCase:
-    identity = hm1_identity()
-    plugin = HM1FuturesPlugin.create(identity)
-    contract = hm1_contract(identity)
-    candidate = materialize_candidate(
-        root / "candidate",
-        contract,
-        fixture_bytes("hm1_valid_strategy.py"),
-    )
-    validation = plugin.validate(candidate, contract)
-    receipt = bind_validation(
-        root,
-        candidate=candidate,
-        validation=validation,
-        contract=contract,
-        plugin_identity=identity,
-    )
-    request = make_request(contract, receipt, request_id="request.hm1.1")
-    runtime = runtime_fixture(root, contract, aggregate_only=True)
-    store = ContentAddressedArtifactStore.create(root / "artifact-store")
-    engine_output = HM1EngineOutput.from_mapping(
-        hm1_engine_mapping(
-            engine_status,
-            coverage_count=coverage_count,
-        )
-    )
-    split = make_hm1_mock_development_split(
-        request,
-        contract,
-        receipt,
-        plugin,
-        runtime.lock,
-        result_id="result.hm1.1",
-        evaluation_seed=7,
-        artifact_store=store,
-        produced_by_event_id="event.hm1.mock",
-        engine_output=engine_output,
-        untrusted_failure_detail=untrusted_failure_detail,
-    )
-    result = plugin.evaluate(receipt, split)
-    return EvaluationCase(
-        plugin=plugin,
-        identity=identity,
-        contract=contract,
-        candidate=candidate,
-        receipt=receipt,
-        request=request,
-        runtime=runtime,
-        store=store,
-        binding=split.binding,
-        result=result,
-        split=split,
-    )
-
-
-def formula_case(
-    root: Path,
-    *,
-    outcome: FormulaMockOutcome = FormulaMockOutcome.BACKEND_UNAVAILABLE,
-) -> EvaluationCase:
-    identity = formula_identity()
-    schema = public_formula_schema()
-    plugin = FormulaAlphaPlugin.create(identity, schema)
-    contract = formula_contract(identity, schema)
-    candidate = materialize_candidate(
-        root / "candidate",
-        contract,
-        fixture_bytes("formula_minimal_candidate.json"),
-    )
-    validation = plugin.validate(candidate, contract)
-    receipt = bind_validation(
-        root,
-        candidate=candidate,
-        validation=validation,
-        contract=contract,
-        plugin_identity=identity,
-    )
-    request = make_request(contract, receipt, request_id="request.formula.1")
-    runtime = runtime_fixture(root, contract, aggregate_only=True)
-    store = ContentAddressedArtifactStore.create(root / "artifact-store")
-    split = make_formula_alpha_mock_development_split(
-        request,
-        contract,
-        receipt,
-        plugin,
-        runtime.lock,
-        result_id="result.formula.1",
-        evaluation_seed=7,
-        artifact_store=store,
-        produced_by_event_id="event.formula.mock",
-        outcome=outcome,
-    )
-    result = plugin.evaluate(receipt, split)
-    return EvaluationCase(
-        plugin=plugin,
-        identity=identity,
-        contract=contract,
-        candidate=candidate,
-        receipt=receipt,
-        request=request,
-        runtime=runtime,
-        store=store,
-        binding=split.binding,
-        result=result,
-        split=split,
-    )
 
 
 def detached_copy(value: Any) -> dict[str, Any]:

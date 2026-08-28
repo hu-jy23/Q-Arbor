@@ -1,4 +1,4 @@
-"""Cross-field invariants for C8 hypothesis nodes and trees."""
+"""Cross-field invariants for hypothesis nodes and trees."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ _UNKNOWN_DROPPED_META_RE: Final = re.compile(r"unknown-sha256:[a-f0-9]{64}")
 
 
 def require_identifier(value: Any, field: str) -> str:
-    """Return a strict C6 identifier, closing the schema ``$`` newline seam."""
+    """Return a strict identifier, closing the schema ``$`` newline seam."""
 
     if not isinstance(value, str) or _IDENTIFIER_RE.fullmatch(value) is None:
         raise HypothesisInvariantError(f"{field} is not a strict identifier")
@@ -177,7 +177,7 @@ def _validate_artifact_ref(value: Mapping[str, JSONValue], field: str) -> None:
 
 
 def _validate_scope(scope: Mapping[str, JSONValue], field: str) -> None:
-    # C5 G02/G09 and C6 J04: PIT data and cost identities remain part of the
+    # Point-in-time data and cost identities remain part of the
     # exact scope carried by every node and insight.
     require_sha256(scope["data_snapshot_sha256"], f"{field}.data_snapshot_sha256")
     require_sha256(scope["cost_model_sha256"], f"{field}.cost_model_sha256")
@@ -213,7 +213,7 @@ def _validate_status(node: Mapping[str, JSONValue]) -> None:
 
 
 def validate_node_invariants(node: Mapping[str, JSONValue]) -> None:
-    """Validate one normalized C6 QuantHypothesisNode payload."""
+    """Validate one normalized QuantHypothesisNode payload."""
 
     require_identifier(node["id"], "node.id")
     _require_optional_identifier(node["parent_id"], "node.parent_id")
@@ -305,7 +305,7 @@ def validate_node_invariants(node: Mapping[str, JSONValue]) -> None:
         evidence["status"] == "valid" and evidence["level"] == "observed"
         for evidence in evidence_refs
     ):
-        # C5 G01/G08 and C6 J02/J04: an admissible state is an evidence
+        # An admissible state is an evidence
         # projection; a scoreless result may exist, but an evidence-free one may not.
         raise HypothesisInvariantError(
             "an admissible node requires valid observed evidence"
@@ -444,7 +444,7 @@ def _validate_compatibility(
 ) -> bool:
     if set(compatibility) != _COMPATIBILITY_KEYS:
         raise HypothesisInvariantError(
-            "compatibility metadata does not use the frozen C8 shape"
+            "compatibility metadata does not use the interface shape"
         )
     if compatibility["source"] not in {"arbor.idea_tree", "arbor.node"}:
         raise HypothesisInvariantError(
@@ -660,7 +660,7 @@ def _validate_compatibility(
 def project_counts(
     nodes: list[Mapping[str, JSONValue]], root_node_id: str
 ) -> dict[str, JSONValue]:
-    """Compute the one frozen C8 count projection."""
+    """Compute the canonical count projection."""
 
     non_root = [node for node in nodes if node["id"] != root_node_id]
     candidates = {
@@ -702,7 +702,7 @@ def compatibility_quarantined(tree: Mapping[str, JSONValue]) -> bool:
 
 
 def validate_tree_invariants(tree: Mapping[str, JSONValue]) -> None:
-    """Validate a normalized C6 QHypothesisTree payload."""
+    """Validate a normalized QHypothesisTree payload."""
 
     require_identifier(tree["run_id"], "tree.run_id")
     require_sha256(tree["contract_hash"], "tree.contract_hash")
@@ -834,7 +834,7 @@ def validate_tree_invariants(tree: Mapping[str, JSONValue]) -> None:
 
     projected = project_counts(cast(list[Mapping[str, JSONValue]], nodes), root_node_id)
     if tree["counts"] != projected:
-        raise HypothesisInvariantError("tree counts do not match the C8 projection")
+        raise HypothesisInvariantError("tree counts do not match the canonical projection")
 
     compatibility = tree.get("compatibility")
     quarantined = False

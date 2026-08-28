@@ -1,4 +1,4 @@
-"""Small callback seam for one C11 development refinement cycle."""
+"""Small callback seam for one development refinement cycle."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from q_arbor.hypotheses.models import QuantHypothesisNode
 
 
 class PromptSnapshot(_ImmutableJSON):
-    """Immutable value validated by the frozen C6 definition."""
+    """Immutable value validated by the interface schema."""
 
     @classmethod
     def _freeze(cls, mapping: Mapping[str, Any]) -> PromptSnapshot:
@@ -169,7 +169,7 @@ def run_product_integration_cycle(
     """Bridge the existing refinement cycle to B1 surfaces without new states.
 
     The existing callbacks retain ownership of capability authorization, Idea Tree
-    mutations, evidence ledger events, and C6-compatible result projection.  This
+    mutations, evidence ledger events, and schema-compatible result projection. This
     seam verifies that exactly one existing query budget unit is consumed and that
     the general result/provenance/artifacts remain bound to those product identities.
     """
@@ -191,7 +191,7 @@ def run_product_integration_cycle(
             raise ValueError("general result is not eligible for development decision")
         projected = project_result_cb(request, outcome)
         if not isinstance(projected, EvaluationResult):
-            raise ValueError("general result projection is not a C6 EvaluationResult")
+            raise ValueError("general result projection is not an EvaluationResult")
         general_refs = [ref.to_dict() for ref in outcome.result.output_artifact_refs]
         projected_refs = [ref.to_dict() for ref in projected.artifacts]
         if canonical_normalized_bytes(general_refs) != canonical_normalized_bytes(

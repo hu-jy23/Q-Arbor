@@ -522,7 +522,7 @@ def _validate_candidate_validation_mapping(
     contract_mapping = _plugin_matches_contract(plugin_identity, contract)
     normalized = normalize_mapping(mapping)
     if set(normalized) != _VALIDATION_KEYS:
-        raise EvaluationSchemaError("CandidateValidation fields do not match C9")
+        raise EvaluationSchemaError("CandidateValidation fields do not match the interface schema")
     if normalized["schema_version"] != "1.0":
         raise EvaluationSchemaError("CandidateValidation schema_version is invalid")
     if normalized["status"] not in _VALIDATION_STATUSES:

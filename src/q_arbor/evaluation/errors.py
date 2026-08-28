@@ -1,4 +1,4 @@
-"""Typed failures for the C9 evaluation boundary."""
+"""Typed failures for the evaluation boundary."""
 
 from __future__ import annotations
 

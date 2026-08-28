@@ -1,8 +1,8 @@
-"""Event-first persistence for the C8 quantitative hypothesis tree.
+"""Event-first persistence for the quantitative hypothesis tree.
 
 The append-only journal is authoritative and ``tree.json`` is a materialized
-view.  This closes C5 G07 and C6 J05/J08 for tree mutations only; C10 owns the
-complete evaluation ledger and C12 owns full-session recovery.
+view. Tree mutations remain append-only; the evaluation ledger and session
+recovery are handled by their dedicated product modules.
 """
 
 from __future__ import annotations

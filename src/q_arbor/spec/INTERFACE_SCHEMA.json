@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:q-arbor:c6:identity-interface:1.0",
-  "title": "Q-Arbor C6 Frozen Interface Envelope",
-  "description": "Design-time interface contract. It freezes Goal A identity seams and is not an implementation or a statistical guarantee.",
+  "$id": "urn:q-arbor:interface-schema:1.0",
+  "title": "Q-Arbor Interface Schema",
+  "description": "Stable product interface contract for Q-Arbor identity-bound artifacts.",
   "type": "object",
   "required": ["artifact_type", "payload"],
   "additionalProperties": false,
@@ -246,7 +246,7 @@
         "schema_version": {"const": "1.0"},
         "contract_id": {"$ref": "#/$defs/Identifier"},
         "task_id": {"$ref": "#/$defs/Identifier"},
-        "task_kind": {"enum": ["synthetic_factor", "formula_alpha", "futures_strategy", "custom_quant"]},
+        "task_kind": {"$ref": "#/$defs/Identifier"},
         "objective": {
           "type": "object",
           "required": ["research_question", "baseline_ref", "candidate_artifact_type"],
@@ -786,7 +786,7 @@
       "x-invariants": [
         "Each method has its own required assumptions; a generic valid-p-value flag is insufficient.",
         "claim_level=controlled requires every required assumption to pass and an independently frozen confirmation design.",
-        "Goal A outputs use risk_flag or diagnostic; they do not assert a new control theorem."
+        "Risk flags and diagnostics do not assert a new control theorem."
       ]
     },
     "EvaluationResult": {
@@ -1042,7 +1042,7 @@
       "x-invariants": [
         "Reports are generated from research_head and a fixed reporter; report.generated may advance the package ledger head without changing research facts.",
         "integrity_status=pass requires an empty missing_artifacts array and all identity-critical artifact hashes to verify.",
-        "final_state=sealed_unopened is an expected Goal A state and is not a missing artifact.",
+        "final_state=sealed_unopened is an expected state and is not a missing artifact.",
         "selected_candidate may be null only with an explicit no-valid-candidate or equivalent terminal decision."
       ]
     }

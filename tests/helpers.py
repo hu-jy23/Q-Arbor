@@ -23,7 +23,7 @@ def valid_contract_mapping() -> dict[str, Any]:
 
 
 def expected_contract_hash(mapping: dict[str, Any]) -> str:
-    """Independent oracle for the frozen C6 canonical hash rule."""
+    """Independent oracle for the canonical interface hash rule."""
 
     def normalize(value: Any) -> Any:
         if isinstance(value, str):

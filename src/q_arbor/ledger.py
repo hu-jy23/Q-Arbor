@@ -1,4 +1,4 @@
-"""Canonical hash-chained evidence storage and minimal replay for C10."""
+"""Canonical hash-chained evidence storage and minimal replay."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def _read_event(path: Path) -> dict[str, JSONValue]:
         raise
     except (EvaluationDecodeError, EvaluationSchemaError) as exc:
         raise EvaluationIntegrityError(
-            "evidence ledger event is not a valid C6 LedgerEvent"
+            "evidence ledger event is not a valid LedgerEvent"
         ) from exc
     except OSError as exc:
         raise EvaluationPersistenceError(
@@ -116,7 +116,7 @@ def _read_event(path: Path) -> dict[str, JSONValue]:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceLedger:
-    """Store canonical C6 events once and verify their ordered hash chain."""
+    """Store canonical events once and verify their ordered hash chain."""
 
     _root: Path
 

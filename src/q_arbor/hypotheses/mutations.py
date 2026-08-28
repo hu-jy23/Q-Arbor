@@ -1,4 +1,4 @@
-"""Immutable mutation requests and the pure C8 event reducer."""
+"""Immutable mutation requests and the pure event reducer."""
 
 from __future__ import annotations
 
@@ -257,7 +257,7 @@ class TreeMutation:
 def _validate_mutation_mapping(mapping: Mapping[str, Any]) -> dict[str, JSONValue]:
     normalized = normalize_mapping(mapping)
     if set(normalized) != {"schema_version", "kind", "payload"}:
-        raise HypothesisInvariantError("TreeMutation fields do not match the C8 shape")
+        raise HypothesisInvariantError("TreeMutation fields do not match the interface shape")
     if normalized["schema_version"] != "1.0":
         raise HypothesisInvariantError("TreeMutation schema_version must equal 1.0")
     kind = normalized["kind"]
@@ -299,7 +299,7 @@ def _validate_mutation_mapping(mapping: Mapping[str, Any]) -> dict[str, JSONValu
 
 
 def compute_ledger_event_hash(event: Mapping[str, Any]) -> str:
-    """Hash canonical C6 LedgerEvent content excluding only ``event_hash``."""
+    """Hash canonical LedgerEvent content excluding only ``event_hash``."""
 
     normalized = normalize_mapping(event)
     normalized.pop("event_hash", None)
@@ -477,7 +477,7 @@ def _prepare_update_node(
         and "failure" in updates
         and updates["failure"] != current_mapping["failure"]
     ):
-        # C5 G07 / C6 J05: terminal failure records remain append-only history.
+        # Terminal failure records remain append-only history.
         raise TreeConflictError("terminal failure records are immutable")
     if (
         current.candidate_id is not None
@@ -722,7 +722,7 @@ def prepare_mutation(
         "mutation": mutation.to_dict(),
         "changed_nodes": changed,
     }
-    # C5 G05/G08 and C6 J02/J05: identities and complete changed records are
+    # Identities and complete changed records are
     # fixed before the ledger event is hashed and durably appended.
     return _EVENT_TYPE_BY_KIND[mutation.kind], node_id, payload
 
@@ -968,6 +968,6 @@ def apply_tree_event(
     mapping["counts"] = project_counts(
         cast(list[Mapping[str, JSONValue]], nodes), tree.root_node_id
     )
-    # C5 G05/G08 and C6 J02/J05: replay consumes only the durable event; the
+    # Replay consumes only the durable event; the
     # tree snapshot is a derived projection whose hash is computed afterwards.
     return freeze_tree(mapping)

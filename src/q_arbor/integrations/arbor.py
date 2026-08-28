@@ -129,7 +129,7 @@ def project_to_arbor(
 ) -> ArborRunProjection:
     """Project validated contract facts into Arbor's development-only metadata."""
 
-    # C6 C01/J01 and the contract leg of J04: mutable Arbor metadata must
+    # Mutable Arbor metadata must
     # derive from one validated canonical contract snapshot.
     payload, contract_hash, contract_canonical = _read_contract(contract)
     objective = _mapping_at(payload, "objective")
@@ -155,8 +155,8 @@ def project_to_arbor(
     checked_branch = _branch_name(trunk_branch)
     checked_baseline = _baseline_score(baseline_score)
 
-    # C5 G05: this whitelist exposes development evaluation only; gate/final
-    # capabilities remain outside the C7 projection. shlex.join quotes both
+    # This whitelist exposes development evaluation only; gate/final
+    # capabilities remain outside the projection. shlex.join quotes both
     # placeholders as complete shell arguments.
     eval_cmd = shlex.join(
         (

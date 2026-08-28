@@ -64,7 +64,7 @@ def prepare_insight_propagation(
         raise TreeConflictError("an insight cannot propagate to its source node")
     _require_ancestor(tree, source_node_id, target_node_id)
 
-    # C5 G09 / C6 J04: identity-critical market, data, and cost scope must match;
+    # Identity-critical market, data, and cost scope must match;
     # optional time/field/regime conditions stay attached to the original record.
     source_scope = source.scope
     target_scope = target.scope
@@ -95,7 +95,7 @@ def prepare_insight_propagation(
         or source_evidence[evidence_id]["status"] != "valid"
         for evidence_id in evidence_ids
     ):
-        # C5 G05/G09 and C6 J05: invalidated or contaminated evidence remains
+        # Invalidated or contaminated evidence remains
         # recorded but cannot become active upstream research memory.
         raise TreeConflictError("insight evidence is not valid for propagation")
 

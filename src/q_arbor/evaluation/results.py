@@ -1,4 +1,4 @@
-"""EvaluationResult invariants, terminal factories, summaries, and C8 binding."""
+"""EvaluationResult invariants, terminal factories, summaries, and tree binding."""
 
 from __future__ import annotations
 
@@ -234,7 +234,7 @@ def _validate_costs(
         "cost_model_sha256",
     }
     if set(costs) != expected_keys:
-        raise EvaluationSchemaError("result costs fields do not match C6")
+        raise EvaluationSchemaError("result costs fields do not match the interface schema")
     contract_cost = cast(dict[str, JSONValue], contract_mapping["cost_model"])
     require_sha256(costs["cost_model_sha256"], "result cost_model_sha256")
     if costs["cost_model_sha256"] != contract_cost["sha256"]:
@@ -310,7 +310,7 @@ def _require_null_projection(
 
 
 class EvaluationResult(_ImmutableJSON):
-    """Deeply immutable, fully bound C6 EvaluationResult."""
+    """Deeply immutable, fully bound EvaluationResult."""
 
     __slots__ = (
         "_controlled_runtime_drift",
@@ -588,7 +588,7 @@ def _validate_result_mapping(
         ]
     for fold in folds:
         if set(fold) != {"fold_id", "time_range", "metrics"}:
-            raise EvaluationSchemaError("fold metric fields do not match C6")
+            raise EvaluationSchemaError("fold metric fields do not match the interface schema")
         fold_id = require_identifier(fold["fold_id"], "fold ID")
         fold_ids.append(fold_id)
         time_range = fold["time_range"]
@@ -720,7 +720,7 @@ def _validate_result_mapping(
     )
     if normalized["statistical_diagnostics"] != []:
         raise EvaluationInvariantError(
-            "C9 results cannot claim statistical diagnostics"
+            "evaluation results cannot claim statistical diagnostics"
         )
 
     if status == "success":
@@ -785,8 +785,8 @@ def _freeze_controlled_evaluation_result(
 ) -> EvaluationResult:
     """Close a post-computation runtime drift without re-reading drifted bytes.
 
-    This package-private C10 seam accepts exactly one host-generated null
-    projection. C5 G01/G02/G05 and C6 J04 require that no observation or
+    This package-private seam accepts exactly one host-generated null
+    projection. No observation or
     artifact from the contaminated computation can cross this boundary.
     """
 
@@ -1120,7 +1120,7 @@ def validate_evaluation_evidence(
         or not isinstance(request, EvaluationRequest)
         or not isinstance(node, QuantHypothesisNode)
     ):
-        raise EvaluationSchemaError("evidence binding requires typed C8/C9 values")
+        raise EvaluationSchemaError("evidence binding requires typed tree and evaluation values")
     try:
         normalized = normalize_mapping(evidence)
         validate_definition(normalized, "EvidenceRef")
@@ -1140,7 +1140,7 @@ def validate_evaluation_evidence(
     ):
         raise EvaluationIntegrityError("result/request binding differs")
     provenance = result.provenance
-    # C6 J04 and C9 §7 require observed evidence to bind the complete
+    # Observed evidence must bind the complete
     # result/request identity, even while a node has no candidate projection.
     if (
         provenance["candidate_sha256"] != request.candidate_hash

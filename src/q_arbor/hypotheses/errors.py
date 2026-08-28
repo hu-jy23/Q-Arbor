@@ -12,7 +12,7 @@ class HypothesisDecodeError(HypothesisError):
 
 
 class HypothesisSchemaError(HypothesisError):
-    """The normalized artifact does not satisfy the frozen C6 schema."""
+    """The normalized artifact does not satisfy the interface schema."""
 
 
 class HypothesisInvariantError(HypothesisError):

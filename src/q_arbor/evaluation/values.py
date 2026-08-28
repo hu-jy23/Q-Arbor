@@ -1,4 +1,4 @@
-"""Deeply immutable primitive C9 value objects."""
+"""Deeply immutable primitive evaluation value objects."""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def _normalized_definition(
 
 
 class ArtifactRef(_ImmutableJSON):
-    """Frozen C6 ArtifactRef with strict identity and literal path checks."""
+    """Frozen ArtifactRef with strict identity and literal path checks."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> ArtifactRef:
@@ -161,7 +161,7 @@ def compute_test_family_snapshot_hash(mapping: Mapping[str, Any]) -> str:
 
 
 class TestFamilySnapshot(_ImmutableJSON):
-    """Canonical frozen C6 test-family membership and method assumptions."""
+    """Canonical frozen test-family membership and method assumptions."""
 
     __test__ = False
 
@@ -266,7 +266,7 @@ def freeze_test_family_snapshot(mapping: Mapping[str, Any]) -> TestFamilySnapsho
 
 
 class PluginIdentity(_ImmutableJSON):
-    """Frozen C6 plugin identity."""
+    """Frozen plugin identity."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> PluginIdentity:
@@ -297,7 +297,7 @@ class PluginIdentity(_ImmutableJSON):
 
 
 class CheckResult(_ImmutableJSON):
-    """Frozen C6 check outcome with sanitized evidence."""
+    """Frozen check outcome with sanitized evidence."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> CheckResult:
@@ -322,7 +322,7 @@ class CheckResult(_ImmutableJSON):
 
 
 class MetricValue(_ImmutableJSON):
-    """Frozen C6 finite-or-null metric value."""
+    """Frozen finite-or-null metric value."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> MetricValue:
@@ -352,7 +352,7 @@ class MetricValue(_ImmutableJSON):
 
 
 class EvaluationFailure(_ImmutableJSON):
-    """Frozen C6 failure record with bounded machine-readable summary."""
+    """Frozen failure record with bounded machine-readable summary."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> EvaluationFailure:
@@ -395,7 +395,7 @@ class FamilyEvidence(_ImmutableJSON):
     def from_mapping(cls, mapping: Mapping[str, Any]) -> FamilyEvidence:
         normalized = normalize_mapping(mapping)
         if set(normalized) != cls._KEYS:
-            raise EvaluationSchemaError("FamilyEvidence fields do not match C9")
+            raise EvaluationSchemaError("FamilyEvidence fields do not match the interface schema")
         family_hint = normalized["family_hint"]
         if family_hint is not None:
             require_identifier(family_hint, "family hint")
@@ -425,7 +425,7 @@ class FoldPolicy(_ImmutableJSON):
     def from_mapping(cls, mapping: Mapping[str, Any]) -> FoldPolicy:
         normalized = normalize_mapping(mapping)
         if set(normalized) != cls._KEYS:
-            raise EvaluationSchemaError("FoldPolicy fields do not match C9")
+            raise EvaluationSchemaError("FoldPolicy fields do not match the interface schema")
         mode = normalized["mode"]
         if mode not in {"required", "aggregate_only"}:
             raise EvaluationSchemaError("FoldPolicy mode is invalid")

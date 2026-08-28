@@ -29,7 +29,7 @@ from q_arbor.evaluation import (
     make_candidate_failure_result,
     validate_evaluation_result,
 )
-from q_arbor.plugins.synthetic import make_synthetic_development_split
+from tests.synthetic_plugin import make_synthetic_development_split
 from tests.evaluation_helpers import (
     CODE_COMMIT,
     artifact_ref_mapping,
@@ -331,7 +331,7 @@ def test_every_non_success_status_failure_pair_is_accepted_with_null_shape(
     case = synthetic_case(tmp_path / "case")
     mapping = make_access_denied_result(
         binding=case.binding,
-        reason_code=ReasonCode.parse("qualification.terminal"),
+        reason_code=ReasonCode.parse("fixture.terminal"),
     ).to_dict()
     mapping["status"] = status
     mapping["failure"]["failure_type"] = failure_type
@@ -382,7 +382,7 @@ def test_status_failure_mismatches_are_invariant_errors(
     case = synthetic_case(tmp_path / "case")
     mapping = make_access_denied_result(
         binding=case.binding,
-        reason_code=ReasonCode.parse("qualification.terminal"),
+        reason_code=ReasonCode.parse("fixture.terminal"),
     ).to_dict()
     mapping["status"] = status
     mapping["failure"]["failure_type"] = failure_type

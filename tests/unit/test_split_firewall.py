@@ -29,7 +29,7 @@ from tests.evaluation_helpers import (
 )
 
 
-_CAPABILITY_TOKEN = b"qualification capability token"
+_CAPABILITY_TOKEN = b"fixture capability token"
 
 
 def _development_request_and_manifest(tmp_path: Path) -> tuple[EvaluationRequest, str]:
@@ -46,7 +46,7 @@ def test_development_request_cannot_resolve_gate_grant(tmp_path: Path) -> None:
     request = make_request(
         contract,
         receipt,
-        capability_grant_id="grant.gate.qualification",
+        capability_grant_id="grant.gate.fixture",
     )
     gate_manifest = contract.to_dict()["data"]["splits"]["gate"][
         "manifest_sha256"
@@ -54,7 +54,7 @@ def test_development_request_cannot_resolve_gate_grant(tmp_path: Path) -> None:
     gate_handle = object()
     registry = SplitGrantRegistry(
         {
-            "grant.gate.qualification": SplitGrant(
+            "grant.gate.fixture": SplitGrant(
                 split_role="gate",
                 split_manifest_hash=gate_manifest,
                 resource=gate_handle,
@@ -86,7 +86,7 @@ def test_split_grant_resolution_rejects_unknown_grant(tmp_path: Path) -> None:
     request, manifest = _development_request_and_manifest(tmp_path)
     registry = SplitGrantRegistry(
         {
-            "grant.other.qualification": SplitGrant(
+            "grant.other.fixture": SplitGrant(
                 split_role="development",
                 split_manifest_hash=manifest,
                 resource=object(),
@@ -129,7 +129,7 @@ def _capability_grant(
         query_count=0,
         state="active",
         token_digest=sha256(_CAPABILITY_TOKEN).hexdigest(),
-        issued_event_id="event.grant.qualification",
+        issued_event_id="event.grant.fixture",
     )
 
 
@@ -298,7 +298,7 @@ def test_broker_rejects_forged_grant_without_spending_budget(
     request, manifest = _development_request_and_manifest(tmp_path)
     forged = replace(
         _capability_grant(request),
-        grant_id="grant.forged.qualification",
+        grant_id="grant.forged.fixture",
     )
     broker = _broker(request, manifest, object(), capability=forged)
 

@@ -1,4 +1,4 @@
-"""Immutable C8 hypothesis node and tree values."""
+"""Immutable hypothesis node and tree values."""
 
 from __future__ import annotations
 
@@ -336,7 +336,7 @@ class NodeDraft:
             }
         )
         # A provisional event identity exercises the exact frozen node schema and
-        # all field-level C8 invariants before a durable event is allocated.
+        # all field-level invariants before a durable event is allocated.
         _validate_node_mapping(
             _materialized_node_mapping(
                 normalized,
@@ -367,7 +367,7 @@ class NodeDraft:
             "code_ref",
         }
         if set(normalized) != expected:
-            raise HypothesisDecodeError("NodeDraft fields do not match the C8 shape")
+            raise HypothesisDecodeError("NodeDraft fields do not match the interface shape")
         return cls(
             id=cast(str, normalized["id"]),
             parent_id=cast(str | None, normalized["parent_id"]),
@@ -682,7 +682,7 @@ def _validate_node_mapping(mapping: Mapping[str, Any]) -> dict[str, JSONValue]:
 
 
 def validate_node(mapping: Mapping[str, Any]) -> QuantHypothesisNode:
-    """Normalize and fully validate a C6 QuantHypothesisNode."""
+    """Normalize and fully validate a QuantHypothesisNode."""
 
     return QuantHypothesisNode._from_normalized(_validate_node_mapping(mapping))
 

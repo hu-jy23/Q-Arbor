@@ -1,4 +1,4 @@
-"""Minimal C10 split-resource authorization boundary."""
+"""Minimal split-resource authorization boundary."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class SplitGrantRegistry:
 
 @dataclass(frozen=True, slots=True)
 class CapabilityGrant:
-    """Frozen C6 capability identity without its raw bearer token."""
+    """Frozen capability identity without its raw bearer token."""
 
     grant_id: str
     run_id: str
@@ -65,7 +65,7 @@ class CapabilityGrant:
 
 
 class FinalCapabilityState(str, Enum):
-    """Closed C6 final-capability states for the synthetic mechanism test."""
+    """Closed final-capability states for deterministic tests."""
 
     LOCKED = "locked"
     UNLOCKED = "unlocked"

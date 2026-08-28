@@ -2,8 +2,8 @@
 
 The source seam is Arbor commit ``65ffcc8``
 ``src/coordinator/idea_tree.py``: ``Node.to_dict``/``from_dict`` and
-``IdeaTree._save_json`` (C4 M04/M15/M16).  This adapter preserves that graph
-surface while constructing the C6 C02 quantitative state; it never invokes
+``IdeaTree._save_json``. This adapter preserves that graph
+surface while constructing the quantitative state; it never invokes
 Arbor or treats legacy runtime state as quantitative evidence.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
 
 if TYPE_CHECKING:
-    # The frozen C8 contract requires consumers to use the package-level API.
+    # The frozen tree contract requires consumers to use the package-level API.
     from q_arbor.hypotheses import QHypothesisTree
 
 LEGACY_UNKNOWN_HASH: Final = "0" * 64
@@ -171,7 +171,7 @@ def import_arbor_tree(
 ) -> ArborImportResult:
     """Import an Arbor v3 tree or node under an explicit score quarantine."""
 
-    # Use only the package-level C8 model API.  The local import avoids a package
+    # Use only the package-level tree model API. The local import avoids a package
     # initialization cycle when q_arbor.hypotheses re-exports this module.
     from q_arbor.hypotheses import freeze_tree
 
@@ -728,7 +728,7 @@ def _scope(
         "cost_model_sha256",
     }
     if set(normalized) != expected:
-        _fail("default_scope must contain exactly the C6 Scope fields")
+        _fail("default_scope must contain exactly the interface Scope fields")
     return normalized, ()
 
 
@@ -755,7 +755,7 @@ def _project_meta(
         else:
             dropped.append(_unknown_key_label(key))
 
-    # C5 G05 and C6 J01/J04: no legacy eval command, split descriptor,
+    # No legacy eval command, split descriptor,
     # dataset/path, token, plugin payload, or unbound score may cross this
     # compatibility boundary.  Only validated metric direction and the
     # structural max-depth limit survive; node scores remain quarantined.

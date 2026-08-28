@@ -1,4 +1,4 @@
-"""Development-only known-truth synthetic evaluation plugin."""
+"""Known-truth evaluation adapter used only by the public test suite."""
 
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ def synthetic_contract_draft(
                 "universe_rule": "fixture membership is frozen",
                 "adjustment_rule": "not applicable to synthetic rows",
                 "label_horizon": "P1D",
-                "known_limitations": ["mechanism smoke only"],
+                "known_limitations": ["deterministic test fixture only"],
             },
             "splits": {
                 "development": {
@@ -277,7 +277,7 @@ def _require_synthetic_computation_contract(
     mapping: Mapping[str, object],
     plugin: SyntheticSignalPlugin,
 ) -> None:
-    """Pin C5 G05 / C6 J01/J04 labels to the known-truth computation."""
+    """Pin accepted labels to the known-truth fixture computation."""
 
     try:
         objective = mapping["objective"]
@@ -751,7 +751,7 @@ def _fold_payloads(
             "time_range",
             "metrics",
         }:
-            raise EvaluationSchemaError("fold metric fields do not match C6")
+            raise EvaluationSchemaError("fold metric fields do not match the interface schema")
         metrics = _typed_values(fold["metrics"], MetricValue, "fold metrics")  # type: ignore[arg-type]
         result.append(
             {
@@ -764,7 +764,7 @@ def _fold_payloads(
 
 
 class _SyntheticDevelopmentSplit:
-    """Concrete C9 capability carrier; C10 owns every production constructor."""
+    """Concrete test capability carrier with closed construction."""
 
     __slots__ = (
         "_artifacts",
@@ -897,7 +897,7 @@ class _SyntheticDevelopmentSplit:
         }
 
     def _contaminated_result(self) -> EvaluationResult:
-        # C5 G01/G02/G05 and C6 J01/J04: suspect values/artifacts cannot cross.
+        # Suspect values and artifacts cannot cross the test evaluation boundary.
         return _freeze_controlled_evaluation_result(
             self._contaminated_payload(),
             binding=self.binding,

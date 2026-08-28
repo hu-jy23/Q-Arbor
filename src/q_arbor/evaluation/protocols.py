@@ -1,4 +1,4 @@
-"""Runtime-checkable task, resource, and artifact protocols for C9."""
+"""Runtime-checkable task, resource, and artifact protocols."""
 
 from __future__ import annotations
 
