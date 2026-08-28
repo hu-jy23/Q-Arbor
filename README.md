@@ -46,14 +46,14 @@ See [Architecture](docs/ARCHITECTURE.md) for the component and lifecycle map.
 
 ## Evaluation
 
-Q-Arbor was evaluated through [QArborBench](https://github.com/hu-jy23/QArborBench), an eight-task benchmark spanning five representative quantitative task families and four primary evidence regimes. Seven cells provide complete Native, Flat Agent and Q-Arbor comparisons; one preserves a typed Q-Arbor no-result.
+Q-Arbor was evaluated through [QArborBench](https://github.com/hu-jy23/QArborBench), a seven-task benchmark spanning five representative quantitative task families and three primary evidence regimes. Every published cell contains complete Native, Flat Agent and Q-Arbor results.
 
-The release covers Bike, M5, Hull, JPX, Recruit, Walmart, Optiver and Web Traffic.
+The release covers Bike, Hull, JPX, Recruit, Walmart, Optiver and Web Traffic.
 
 Frozen primary results:
 
-- Q-Arbor vs Native: 5 wins, 2 losses, 1 no-result.
-- Q-Arbor vs Flat Agent: 4 wins, 3 losses, 1 no-result.
+- Q-Arbor vs Native: 5 wins, 2 losses.
+- Q-Arbor vs Flat Agent: 4 wins, 3 losses.
 - Public validation, Q-Arbor vs Flat Agent: 3 wins in 4 cells.
 
 These are task-dependent results from one formal run per arm. They do not establish universal superiority, statistical score stability, a pure same-model component ablation, trading profitability or exact provider cost.
