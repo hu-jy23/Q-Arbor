@@ -4,6 +4,17 @@ Q-Arbor is a task-neutral research harness for stateful, bounded and auditable q
 
 Status: **v0.1 public release**.
 
+<p align="center">
+  <a href="https://github.com/hu-jy23/Q-Arbor/releases/tag/v0.1.0"><img alt="release v0.1.0" src="https://img.shields.io/badge/release-v0.1.0-173B57"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-237B78">
+  <img alt="677 tests passing" src="https://img.shields.io/badge/tests-677%20passing-237B78">
+  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-B27619"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/q-arbor-architecture.svg" width="100%" alt="Q-Arbor control and evidence architecture">
+</p>
+
 ## Core capabilities
 
 - **Q-Task Contract** freezes task, data-role, metric, budget and provenance identity.
@@ -41,6 +52,10 @@ Run the public verification suite:
 ## Architecture
 
 Task adapters translate opaque candidates into task-local invocations. Runners execute those invocations and return integrity-bound receipts. The shared core consumes metric-neutral result envelopes through an open stage policy, then records a typed decision and provenance chain.
+
+<p align="center">
+  <img src="docs/assets/refinement-evidence-loop.svg" width="100%" alt="One bounded Q-Arbor refinement cycle and its evidence path">
+</p>
 
 See [Architecture](docs/ARCHITECTURE.md) for the component and lifecycle map.
 

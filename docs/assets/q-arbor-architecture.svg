@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="590" viewBox="0 0 1200 590" role="img" aria-labelledby="title desc">
+  <title id="title">Q-Arbor control and evidence architecture</title>
+  <desc id="desc">A frozen task contract enters a propose, dispatch, evaluate, decide control path. A task adapter and runner supply metric-neutral results, while a capability firewall, budget ledger, hypothesis tree, and reporting layer preserve control and evidence.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#5C6770"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-20%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#173B57" flood-opacity=".12"/>
+    </filter>
+    <style>
+      .title{font:700 30px Inter,Segoe UI,Arial,sans-serif;fill:#173B57}
+      .subtitle{font:400 16px Inter,Segoe UI,Arial,sans-serif;fill:#5C6770}
+      .label{font:700 18px Inter,Segoe UI,Arial,sans-serif;fill:#173B57}
+      .small{font:400 14px Inter,Segoe UI,Arial,sans-serif;fill:#5C6770}
+      .core{fill:#fff;stroke:#237B78;stroke-width:3}
+      .support{fill:#EEF3F5;stroke:#173B57;stroke-width:2}
+      .evidence{fill:#fff;stroke:#B27619;stroke-width:2}
+      .arrow{fill:none;stroke:#5C6770;stroke-width:2.5;marker-end:url(#arrow)}
+      .feedback{fill:none;stroke:#237B78;stroke-width:2.5;stroke-dasharray:7 6;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1200" height="590" rx="24" fill="#FAFCFD"/>
+  <text x="60" y="58" class="title">Q-Arbor control and evidence flow</text>
+  <text x="60" y="86" class="subtitle">Task semantics stay behind open adapters; the shared core consumes typed state and metric-neutral results.</text>
+
+  <rect x="55" y="204" width="178" height="94" rx="14" class="support" filter="url(#shadow)"/>
+  <text x="144" y="240" text-anchor="middle" class="label">Frozen Q-Task</text>
+  <text x="144" y="265" text-anchor="middle" class="label">Contract</text>
+  <text x="144" y="286" text-anchor="middle" class="small">identity · metric · budget</text>
+
+  <rect x="290" y="214" width="150" height="74" rx="14" class="core" filter="url(#shadow)"/>
+  <text x="365" y="258" text-anchor="middle" class="label">Propose</text>
+  <rect x="480" y="214" width="150" height="74" rx="14" class="core" filter="url(#shadow)"/>
+  <text x="555" y="258" text-anchor="middle" class="label">Dispatch</text>
+  <rect x="670" y="214" width="150" height="74" rx="14" class="core" filter="url(#shadow)"/>
+  <text x="745" y="258" text-anchor="middle" class="label">Evaluate</text>
+  <rect x="860" y="214" width="150" height="74" rx="14" class="core" filter="url(#shadow)"/>
+  <text x="935" y="258" text-anchor="middle" class="label">Decide</text>
+
+  <path d="M233 251 H282" class="arrow"/>
+  <path d="M440 251 H472" class="arrow"/>
+  <path d="M630 251 H662" class="arrow"/>
+  <path d="M820 251 H852" class="arrow"/>
+
+  <rect x="622" y="112" width="246" height="72" rx="13" class="support"/>
+  <text x="745" y="141" text-anchor="middle" class="label">Task adapter / runner</text>
+  <text x="745" y="165" text-anchor="middle" class="small">result envelope + provenance</text>
+  <path d="M745 184 V206" class="arrow"/>
+
+  <rect x="360" y="360" width="230" height="74" rx="13" class="support"/>
+  <text x="475" y="391" text-anchor="middle" class="label">Q-Hypothesis Tree</text>
+  <text x="475" y="415" text-anchor="middle" class="small">lineage · attempts · evidence</text>
+  <path d="M420 360 C390 330 365 320 365 296" class="arrow"/>
+  <path d="M935 296 C925 415 700 465 585 427" class="feedback"/>
+
+  <rect x="635" y="360" width="220" height="74" rx="13" class="evidence"/>
+  <text x="745" y="391" text-anchor="middle" class="label">Capability + ledger</text>
+  <text x="745" y="415" text-anchor="middle" class="small">authorize · debit · record</text>
+  <path d="M745 360 V296" class="arrow"/>
+
+  <rect x="900" y="360" width="244" height="88" rx="13" class="evidence"/>
+  <text x="1022" y="391" text-anchor="middle" class="label">Durable evidence</text>
+  <text x="1022" y="416" text-anchor="middle" class="small">checkpoint · ResearchPackage</text>
+  <text x="1022" y="436" text-anchor="middle" class="small">report or bounded stop</text>
+  <path d="M955 296 C965 320 980 337 995 352" class="arrow"/>
+
+  <rect x="55" y="510" width="1090" height="38" rx="19" fill="#173B57"/>
+  <text x="600" y="535" text-anchor="middle" style="font:600 15px Inter,Segoe UI,Arial,sans-serif;fill:#fff">Open task surface  ·  typed research state  ·  fail-closed evaluation  ·  auditable closure</text>
+</svg>

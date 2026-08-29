@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Q-Arbor refinement and evidence loop</title>
+  <desc id="desc">Proposal snapshot, isolated dispatch, capability and budget gate, task-local evaluation, and typed decision feed an append-only ledger and terminal checkpoint.</desc>
+  <defs>
+    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0 L0 6 L9 3z" fill="#5C6770"/></marker>
+    <style>
+      .title{font:700 28px Inter,Segoe UI,Arial,sans-serif;fill:#173B57}
+      .sub{font:400 15px Inter,Segoe UI,Arial,sans-serif;fill:#5C6770}
+      .num{font:700 15px Inter,Segoe UI,Arial,sans-serif;fill:#fff}
+      .head{font:700 15px Inter,Segoe UI,Arial,sans-serif;fill:#173B57}
+      .body{font:400 13px Inter,Segoe UI,Arial,sans-serif;fill:#5C6770}
+      .box{fill:#EEF3F5;stroke:#173B57;stroke-width:2}
+      .gate{fill:#fff;stroke:#B27619;stroke-width:2.5}
+      .line{fill:none;stroke:#5C6770;stroke-width:2.2;marker-end:url(#arrow2)}
+      .audit{fill:none;stroke:#B27619;stroke-width:1.7;stroke-dasharray:5 5}
+    </style>
+  </defs>
+  <rect width="1200" height="420" rx="24" fill="#FAFCFD"/>
+  <text x="55" y="55" class="title">One bounded refinement cycle</text>
+  <text x="55" y="82" class="sub">Access is authorized and debited before evaluation; every transition remains identity-linked.</text>
+
+  <g>
+    <rect x="55" y="126" width="180" height="90" rx="14" class="box"/>
+    <circle cx="80" cy="151" r="15" fill="#173B57"/><text x="80" y="156" text-anchor="middle" class="num">1</text>
+    <text x="105" y="157" class="head">Proposal snapshot</text>
+    <text x="145" y="184" text-anchor="middle" class="body">freeze hypothesis + prompt</text>
+
+    <rect x="275" y="126" width="180" height="90" rx="14" class="box"/>
+    <circle cx="300" cy="151" r="15" fill="#173B57"/><text x="300" y="156" text-anchor="middle" class="num">2</text>
+    <text x="325" y="157" class="head">Isolated dispatch</text>
+    <text x="365" y="184" text-anchor="middle" class="body">bind candidate identity</text>
+
+    <rect x="495" y="126" width="180" height="90" rx="14" class="gate"/>
+    <circle cx="520" cy="151" r="15" fill="#B27619"/><text x="520" y="156" text-anchor="middle" class="num">3</text>
+    <text x="545" y="157" class="head">Gate + atomic debit</text>
+    <text x="585" y="184" text-anchor="middle" class="body">fail closed before access</text>
+
+    <rect x="715" y="126" width="180" height="90" rx="14" class="box"/>
+    <circle cx="740" cy="151" r="15" fill="#237B78"/><text x="740" y="156" text-anchor="middle" class="num">4</text>
+    <text x="765" y="157" class="head">Task evaluation</text>
+    <text x="805" y="184" text-anchor="middle" class="body">metric-neutral envelope</text>
+
+    <rect x="935" y="126" width="210" height="90" rx="14" class="box"/>
+    <circle cx="960" cy="151" r="15" fill="#237B78"/><text x="960" y="156" text-anchor="middle" class="num">5</text>
+    <text x="985" y="157" class="head">Typed decision</text>
+    <text x="1045" y="184" text-anchor="middle" class="body">merge · prune · retry · stop</text>
+  </g>
+  <path d="M235 171 H267 M455 171 H487 M675 171 H707 M895 171 H927" class="line"/>
+
+  <rect x="255" y="294" width="500" height="72" rx="14" fill="#173B57"/>
+  <text x="505" y="326" text-anchor="middle" style="font:700 18px Inter,Segoe UI,Arial,sans-serif;fill:#fff">Append-only ledger</text>
+  <text x="505" y="350" text-anchor="middle" style="font:400 14px Inter,Segoe UI,Arial,sans-serif;fill:#DCE7EC">proposal · dispatch · authorization · result · decision</text>
+  <rect x="825" y="294" width="320" height="72" rx="14" fill="#fff" stroke="#B27619" stroke-width="2"/>
+  <text x="985" y="326" text-anchor="middle" class="head">Checkpoint / report / bounded stop</text>
+  <text x="985" y="350" text-anchor="middle" class="body">recoverable state and terminal evidence</text>
+  <path d="M755 330 H817" class="line"/>
+  <path d="M145 216 V270 H505 V286 M365 216 V270 M585 216 V270 M805 216 V270 M1045 216 V286" class="audit"/>
+</svg>
