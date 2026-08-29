@@ -12,7 +12,7 @@ Status: **v0.1 public release**.
 </p>
 
 <p align="center">
-  <img src="docs/assets/q-arbor-architecture.svg" width="100%" alt="Q-Arbor control and evidence architecture">
+  <img src="docs/assets/paper-figure-1-control-flow.png" width="100%" alt="Figure 1 from the final paper: Q-Arbor control and evidence flow">
 </p>
 
 ## Core capabilities
@@ -54,7 +54,7 @@ Run the public verification suite:
 Task adapters translate opaque candidates into task-local invocations. Runners execute those invocations and return integrity-bound receipts. The shared core consumes metric-neutral result envelopes through an open stage policy, then records a typed decision and provenance chain.
 
 <p align="center">
-  <img src="docs/assets/refinement-evidence-loop.svg" width="100%" alt="One bounded Q-Arbor refinement cycle and its evidence path">
+  <img src="docs/assets/paper-figure-2-refinement-cycle.png" width="100%" alt="Figure 2 from the final paper: a bounded Q-Arbor refinement cycle">
 </p>
 
 See [Architecture](docs/ARCHITECTURE.md) for the component and lifecycle map.
